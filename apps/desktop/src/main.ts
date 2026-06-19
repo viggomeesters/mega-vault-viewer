@@ -40,6 +40,10 @@ type IndexSnapshot = {
   first_document: DocumentView | null;
 };
 
+type RefreshSnapshot = {
+  stats: VaultStats;
+};
+
 type AppMode = "setup" | "indexing" | "ready" | "error";
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -60,6 +64,12 @@ let showVaultSetup = true;
 let lastError = "";
 let backStack: number[] = [];
 let forwardStack: number[] = [];
+let currentSearchQuery = "";
+let isRefreshing = false;
+let lastRefreshAt: Date | null = null;
+let refreshTimer: number | null = null;
+
+const AUTO_REFRESH_MS = 10 * 60 * 1000;
 
 const formatScore = new Intl.NumberFormat("en", {
   maximumFractionDigits: 2,
@@ -226,10 +236,9 @@ function renderVaultSetup() {
         <div>
           <span>Current vault</span>
           <strong title="${escapeAttribute(vaultPath)}">${escapeHtml(formatVaultName(vaultPath))}</strong>
-          <small>${escapeHtml(formatStats(currentStats))}</small>
+          <small>${escapeHtml(formatVaultSummary())}</small>
         </div>
-        <div class="compact-actions">
-          <button id="reindex-button" class="secondary-button" type="button">Reindex</button>
+        <div class="compact-actions compact-actions-single">
           <button id="change-vault-button" class="secondary-button" type="button">Change</button>
         </div>
       </section>
@@ -259,7 +268,6 @@ function renderSlugButton(slug: string) {
 
 function bindEvents() {
   document.querySelector<HTMLButtonElement>("#index-button")?.addEventListener("click", indexVault);
-  document.querySelector<HTMLButtonElement>("#reindex-button")?.addEventListener("click", indexVault);
   document.querySelector<HTMLButtonElement>("#back-button")?.addEventListener("click", navigateBack);
   document.querySelector<HTMLButtonElement>("#forward-button")?.addEventListener("click", navigateForward);
   document.querySelector<HTMLButtonElement>("#change-vault-button")?.addEventListener("click", () => {
@@ -309,6 +317,7 @@ async function loadDefaultPath() {
 
 async function indexVault() {
   try {
+    stopAutoRefresh();
     appMode = "indexing";
     lastError = "";
     statusText = "Indexing vault in background...";
@@ -320,8 +329,11 @@ async function indexVault() {
     forwardStack = [];
     statusText = `Indexed ${snapshot.stats.documents} documents`;
     searchResults = [];
+    currentSearchQuery = "";
+    lastRefreshAt = new Date();
     appMode = "ready";
     showVaultSetup = false;
+    startAutoRefresh();
   } catch (error) {
     lastError = String(error);
     statusText = "Index failed";
@@ -331,8 +343,45 @@ async function indexVault() {
   render();
 }
 
+async function refreshIndexInBackground(reason: "timer" | "focus" = "timer") {
+  if (appMode !== "ready" || !vaultPath || isRefreshing) {
+    return;
+  }
+  if (reason === "focus" && lastRefreshAt && Date.now() - lastRefreshAt.getTime() < AUTO_REFRESH_MS) {
+    return;
+  }
+
+  const openPath = currentDocument?.relative_path ?? null;
+  isRefreshing = true;
+  statusText = "Updating index in background...";
+  render();
+
+  try {
+    const snapshot = await invoke<RefreshSnapshot>("refresh_index", { vaultPath });
+    currentStats = snapshot.stats;
+    lastRefreshAt = new Date();
+
+    if (openPath) {
+      currentDocument = await invoke<DocumentView>("open_document_by_path", { relativePath: openPath });
+    }
+    if (currentSearchQuery) {
+      searchResults = await invoke<SearchHit[]>("search", { query: currentSearchQuery });
+    }
+    backStack = [];
+    forwardStack = [];
+
+    statusText = `Updated ${formatRefreshTime(lastRefreshAt)}`;
+  } catch (error) {
+    statusText = `Background update failed: ${String(error)}`;
+  } finally {
+    isRefreshing = false;
+    render();
+  }
+}
+
 async function runSearch(query: string) {
   try {
+    currentSearchQuery = query;
     statusText = `Searching "${query}"…`;
     render();
     searchResults = await invoke<SearchHit[]>("search", { query });
@@ -397,6 +446,20 @@ function applyOpenedDocument(document: DocumentView, status: string, recordHisto
   statusText = status;
 }
 
+function startAutoRefresh() {
+  stopAutoRefresh();
+  refreshTimer = window.setInterval(() => {
+    void refreshIndexInBackground("timer");
+  }, AUTO_REFRESH_MS);
+}
+
+function stopAutoRefresh() {
+  if (refreshTimer !== null) {
+    window.clearInterval(refreshTimer);
+    refreshTimer = null;
+  }
+}
+
 function escapeHtml(value: string) {
   return value
     .replaceAll("&", "&amp;")
@@ -422,6 +485,25 @@ function formatStats(stats: VaultStats | null) {
   return `${stats.documents} docs, ${stats.links} links`;
 }
 
+function formatVaultSummary() {
+  const stats = formatStats(currentStats);
+  if (isRefreshing) {
+    return `${stats} · syncing`;
+  }
+  if (lastRefreshAt) {
+    return `${stats} · synced ${formatRefreshTime(lastRefreshAt)}`;
+  }
+
+  return stats;
+}
+
+function formatRefreshTime(date: Date) {
+  return date.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 void loadDefaultPath();
 
 document.addEventListener("keydown", (event) => {
@@ -436,4 +518,8 @@ document.addEventListener("keydown", (event) => {
     event.preventDefault();
     void navigateForward();
   }
+});
+
+window.addEventListener("focus", () => {
+  void refreshIndexInBackground("focus");
 });

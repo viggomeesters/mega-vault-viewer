@@ -172,6 +172,10 @@ a:focus-visible {
   gap: 8px;
 }
 
+.compact-actions-single {
+  grid-template-columns: 1fr;
+}
+
 .secondary-button {
   min-height: 36px;
   background: #20262b;

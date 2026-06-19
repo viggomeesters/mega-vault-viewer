@@ -66,6 +66,11 @@ Backlinked content for the local viewer.
     assert_eq!(beta.backlinks, vec!["20260617-0900-alpha"]);
     assert!(beta.html.contains("Beta Note"));
 
+    let beta_by_path = runtime
+        .open_by_relative_path("10_notes/2026-06/20260617-0915-beta.md")
+        .unwrap();
+    assert_eq!(beta_by_path.id, beta.id);
+
     let alpha = runtime.open_by_slug("20260617-0900-alpha").unwrap();
     let frontmatter = alpha.frontmatter.unwrap();
     assert_eq!(frontmatter["type"].as_str(), Some("reference"));

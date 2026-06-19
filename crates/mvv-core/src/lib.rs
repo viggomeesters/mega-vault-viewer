@@ -208,6 +208,20 @@ impl VaultRuntime {
         self.with_link_context(&conn, doc)
     }
 
+    pub fn open_by_relative_path(&self, relative_path: &str) -> Result<DocumentView> {
+        let conn = self.open_db()?;
+        let doc = conn
+            .query_row(
+                "select id, slug, title, filename, stem, path, relative_path, body, frontmatter_json, frontmatter_error from documents where relative_path = ?1",
+                [relative_path],
+                |row| row_to_document_view(row, &self.root),
+            )
+            .optional()?
+            .with_context(|| format!("document not found: {relative_path}"))?;
+
+        self.with_link_context(&conn, doc)
+    }
+
     fn with_link_context(&self, conn: &Connection, doc: DocumentView) -> Result<DocumentView> {
         let outgoing_links = collect_strings(
             conn,
