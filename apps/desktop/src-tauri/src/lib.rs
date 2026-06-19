@@ -28,15 +28,25 @@ fn default_fixture_path() -> String {
 }
 
 #[tauri::command]
-fn index_vault(state: State<'_, AppState>, vault_path: String) -> Result<IndexSnapshot, String> {
+async fn index_vault(
+    state: State<'_, AppState>,
+    vault_path: String,
+) -> Result<IndexSnapshot, String> {
     let state_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("target")
         .join("mvv-state");
-    let runtime = VaultRuntime::build(&vault_path, state_dir).map_err(|error| error.to_string())?;
-    let stats = runtime.stats().map_err(|error| error.to_string())?;
-    let first_document = runtime
-        .first_document()
-        .map_err(|error| error.to_string())?;
+    let snapshot = tauri::async_runtime::spawn_blocking(move || {
+        let runtime = VaultRuntime::build(&vault_path, state_dir)?;
+        let stats = runtime.stats()?;
+        let first_document = runtime.first_document()?;
+
+        Ok::<_, anyhow::Error>((runtime, stats, first_document))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+    .map_err(|error| error.to_string())?;
+
+    let (runtime, stats, first_document) = snapshot;
 
     *state.runtime.lock().map_err(|_| "runtime lock poisoned")? = Some(runtime);
     Ok(IndexSnapshot {

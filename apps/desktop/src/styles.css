@@ -44,6 +44,12 @@ button:hover {
   background: #f2f7fa;
 }
 
+button:disabled,
+input:disabled {
+  cursor: default;
+  opacity: 0.64;
+}
+
 button:focus-visible,
 input:focus-visible,
 a:focus-visible {
@@ -107,27 +113,82 @@ a:focus-visible {
   padding: 0 11px;
 }
 
-.stats {
+.setup-panel,
+.vault-summary {
+  display: grid;
+  gap: 12px;
+}
+
+.vault-summary {
+  border: 1px solid #2d353c;
+  border-radius: 7px;
+  background: #111417;
+  padding: 12px;
+}
+
+.vault-summary div:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.vault-summary span,
+.vault-summary small,
+.busy-state,
+.error-text {
+  color: #99a6b1;
+  font-size: 12px;
+}
+
+.vault-summary span {
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.vault-summary strong {
+  overflow: hidden;
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compact-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
-.stats span {
-  display: grid;
-  gap: 2px;
-  border: 1px solid #2d353c;
-  border-radius: 7px;
-  background: #111417;
-  padding: 10px;
-  font-size: 22px;
-  font-variant-numeric: tabular-nums;
+.secondary-button {
+  min-height: 36px;
+  background: #20262b;
+  color: #dbe6ed;
 }
 
-.stats small {
-  color: #99a6b1;
-  font-size: 11px;
-  text-transform: uppercase;
+.secondary-button:hover {
+  background: #293138;
+}
+
+.busy-state {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  border: 2px solid #38414a;
+  border-top-color: #7fd4ff;
+  border-radius: 999px;
+  animation: spin 0.8s linear infinite;
+}
+
+.error-text {
+  margin: 0;
+  color: #ffb4a8;
+  line-height: 1.35;
 }
 
 .results {
@@ -249,6 +310,12 @@ a:focus-visible {
   color: #dbe6ed;
   padding: 0 9px;
   text-overflow: ellipsis;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @media (max-width: 820px) {

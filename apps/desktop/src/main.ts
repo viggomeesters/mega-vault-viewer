@@ -29,6 +29,8 @@ type IndexSnapshot = {
   first_document: DocumentView | null;
 };
 
+type AppMode = "setup" | "indexing" | "ready" | "error";
+
 const app = document.querySelector<HTMLDivElement>("#app");
 
 if (!app) {
@@ -42,6 +44,9 @@ let currentStats: VaultStats | null = null;
 let searchResults: SearchHit[] = [];
 let statusText = "Ready";
 let vaultPath = "";
+let appMode: AppMode = "setup";
+let showVaultSetup = true;
+let lastError = "";
 
 const formatScore = new Intl.NumberFormat("en", {
   maximumFractionDigits: 2,
@@ -56,17 +61,7 @@ function render() {
           <h1>Mega Vault Viewer</h1>
         </div>
 
-        <label class="field">
-          <span>Vault path</span>
-          <input id="vault-path" name="vault-path" value="${escapeAttribute(vaultPath)}" spellcheck="false" />
-        </label>
-
-        <button id="index-button" type="button">Index vault</button>
-
-        <div class="stats" aria-live="polite">
-          <span>${currentStats?.documents ?? 0}<small>docs</small></span>
-          <span>${currentStats?.links ?? 0}<small>links</small></span>
-        </div>
+        ${renderVaultSetup()}
 
         <label class="field">
           <span>Search</span>
@@ -122,12 +117,51 @@ function renderSearchHit(hit: SearchHit) {
   `;
 }
 
+function renderVaultSetup() {
+  if (appMode === "ready" && !showVaultSetup) {
+    return `
+      <section class="vault-summary" aria-label="Current vault">
+        <div>
+          <span>Current vault</span>
+          <strong title="${escapeAttribute(vaultPath)}">${escapeHtml(formatVaultName(vaultPath))}</strong>
+          <small>${escapeHtml(formatStats(currentStats))}</small>
+        </div>
+        <div class="compact-actions">
+          <button id="reindex-button" class="secondary-button" type="button">Reindex</button>
+          <button id="change-vault-button" class="secondary-button" type="button">Change</button>
+        </div>
+      </section>
+    `;
+  }
+
+  return `
+    <section class="setup-panel" aria-label="Vault setup">
+      <label class="field">
+        <span>Vault path</span>
+        <input id="vault-path" name="vault-path" value="${escapeAttribute(vaultPath)}" spellcheck="false" ${appMode === "indexing" ? "disabled" : ""} />
+      </label>
+
+      <button id="index-button" type="button" ${appMode === "indexing" ? "disabled" : ""}>
+        ${appMode === "indexing" ? "Indexing..." : currentStats ? "Reindex vault" : "Index vault"}
+      </button>
+
+      ${appMode === "indexing" ? `<div class="busy-state" role="status"><span class="spinner" aria-hidden="true"></span><span>Indexing vault in background</span></div>` : ""}
+      ${appMode === "error" ? `<p class="error-text">${escapeHtml(lastError)}</p>` : ""}
+    </section>
+  `;
+}
+
 function renderSlugButton(slug: string) {
   return `<button class="slug-button" type="button" data-slug="${escapeAttribute(slug)}">${escapeHtml(slug)}</button>`;
 }
 
 function bindEvents() {
   document.querySelector<HTMLButtonElement>("#index-button")?.addEventListener("click", indexVault);
+  document.querySelector<HTMLButtonElement>("#reindex-button")?.addEventListener("click", indexVault);
+  document.querySelector<HTMLButtonElement>("#change-vault-button")?.addEventListener("click", () => {
+    showVaultSetup = true;
+    render();
+  });
   document.querySelector<HTMLInputElement>("#vault-path")?.addEventListener("input", (event) => {
     vaultPath = (event.target as HTMLInputElement).value;
   });
@@ -163,15 +197,22 @@ async function loadDefaultPath() {
 
 async function indexVault() {
   try {
-    statusText = "Indexing…";
+    appMode = "indexing";
+    lastError = "";
+    statusText = "Indexing vault in background...";
     render();
     const snapshot = await invoke<IndexSnapshot>("index_vault", { vaultPath });
     currentStats = snapshot.stats;
     currentDocument = snapshot.first_document;
     statusText = `Indexed ${snapshot.stats.documents} documents`;
     searchResults = [];
+    appMode = "ready";
+    showVaultSetup = false;
   } catch (error) {
-    statusText = String(error);
+    lastError = String(error);
+    statusText = "Index failed";
+    appMode = "error";
+    showVaultSetup = true;
   }
   render();
 }
@@ -208,6 +249,19 @@ function escapeHtml(value: string) {
 
 function escapeAttribute(value: string) {
   return escapeHtml(value).replaceAll("'", "&#39;");
+}
+
+function formatVaultName(path: string) {
+  const parts = path.split(/[\\/]/).filter(Boolean);
+  return parts.at(-1) ?? path;
+}
+
+function formatStats(stats: VaultStats | null) {
+  if (!stats) {
+    return "Not indexed";
+  }
+
+  return `${stats.documents} docs, ${stats.links} links`;
 }
 
 void loadDefaultPath();
