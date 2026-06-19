@@ -1,0 +1,14 @@
+{
+  "name": "mega-vault-viewer-workspace",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/desktop"
+  ],
+  "scripts": {
+    "desktop:dev": "npm --workspace apps/desktop run tauri:dev",
+    "desktop:build": "npm --workspace apps/desktop run tauri:build",
+    "build": "npm --workspace apps/desktop run build && cargo build --workspace",
+    "test": "npm --workspace apps/desktop run test && cargo test --workspace"
+  }
+}
