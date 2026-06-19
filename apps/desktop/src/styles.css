@@ -27,7 +27,8 @@ body {
 }
 
 button,
-input {
+input,
+textarea {
   font: inherit;
 }
 
@@ -45,13 +46,15 @@ button:hover {
 }
 
 button:disabled,
-input:disabled {
+input:disabled,
+textarea:disabled {
   cursor: default;
   opacity: 0.64;
 }
 
 button:focus-visible,
 input:focus-visible,
+textarea:focus-visible,
 a:focus-visible {
   outline: 2px solid #7fd4ff;
   outline-offset: 2px;
@@ -499,6 +502,23 @@ a:focus-visible {
   gap: 8px;
 }
 
+.document-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: end;
+  gap: 8px;
+}
+
+.edit-toggle-button {
+  min-width: 72px;
+}
+
+.edit-toggle-button.is-active {
+  border-color: #5baed0;
+  background: #163140;
+  color: #dff6ff;
+}
+
 .nav-buttons {
   display: flex;
   gap: 6px;
@@ -621,6 +641,71 @@ a:focus-visible {
   line-height: 1.65;
 }
 
+.document-body.is-editing {
+  display: grid;
+  padding: 0;
+}
+
+.editor-pane {
+  display: grid;
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+}
+
+.editor-pane textarea {
+  width: 100%;
+  min-height: 0;
+  resize: none;
+  border: 0;
+  border-bottom: 1px solid #272d33;
+  background: #0f1114;
+  color: #edf1f5;
+  padding: 24px 28px;
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Monaco,
+    Consolas,
+    "Liberation Mono",
+    monospace;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.editor-footer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  border-bottom: 1px solid #272d33;
+  background: #13171a;
+  padding: 12px 28px;
+}
+
+.editor-footer p {
+  margin: 0;
+  overflow: hidden;
+  color: #9ba7b2;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.editor-actions button {
+  min-width: 86px;
+  min-height: 36px;
+}
+
+.editor-pane > .error-text {
+  padding: 10px 28px;
+}
+
 .document-body :where(h1, h2, h3) {
   line-height: 1.15;
 }
@@ -710,5 +795,13 @@ a:focus-visible {
   .document-actions {
     max-width: 100%;
     justify-items: start;
+  }
+
+  .document-action-row {
+    justify-content: start;
+  }
+
+  .editor-footer {
+    grid-template-columns: 1fr;
   }
 }

@@ -74,6 +74,11 @@ type RefreshSnapshot = {
   stats: VaultStats;
 };
 
+type SaveSnapshot = {
+  stats: VaultStats;
+  document: DocumentView;
+};
+
 type AppMode = "setup" | "indexing" | "ready" | "error";
 type FileViewMode = "folders" | "newest" | "recent";
 type CalendarDay = {
@@ -105,6 +110,10 @@ let backStack: number[] = [];
 let forwardStack: number[] = [];
 let currentSearchQuery = "";
 let isRefreshing = false;
+let isEditing = false;
+let isSaving = false;
+let editSource = "";
+let editError = "";
 let lastRefreshAt: Date | null = null;
 let refreshTimer: number | null = null;
 
@@ -144,9 +153,16 @@ function render() {
             ${currentDocument ? `<p class="document-title">${escapeHtml(currentDocument.title)}</p>` : ""}
           </div>
           <div class="document-actions">
-            <div class="nav-buttons" aria-label="Document navigation">
-              <button id="back-button" type="button" title="Back" aria-label="Back" ${backStack.length === 0 ? "disabled" : ""}>&lt;</button>
-              <button id="forward-button" type="button" title="Forward" aria-label="Forward" ${forwardStack.length === 0 ? "disabled" : ""}>&gt;</button>
+            <div class="document-action-row">
+              ${
+                currentDocument
+                  ? `<button id="edit-toggle-button" class="secondary-button edit-toggle-button ${isEditing ? "is-active" : ""}" type="button" ${isSaving ? "disabled" : ""}>${isEditing ? "Read" : "Edit"}</button>`
+                  : ""
+              }
+              <div class="nav-buttons" aria-label="Document navigation">
+                <button id="back-button" type="button" title="Back" aria-label="Back" ${backStack.length === 0 || isSaving ? "disabled" : ""}>&lt;</button>
+                <button id="forward-button" type="button" title="Forward" aria-label="Forward" ${forwardStack.length === 0 || isSaving ? "disabled" : ""}>&gt;</button>
+              </div>
             </div>
             <code title="${escapeAttribute(currentDocument?.path ?? "mvv://local")}">${escapeHtml(currentDocument?.relative_path ?? "mvv://local")}</code>
           </div>
@@ -155,12 +171,8 @@ function render() {
         ${currentDocument ? renderMetadataPanel(currentDocument) : ""}
         ${currentDocument ? renderLinkPanel(currentDocument) : ""}
 
-        <article class="document-body">
-          ${
-            currentDocument
-              ? currentDocument.html
-              : `<div class="empty-state"><h3>Start with the fixture vault</h3><p>The MVP indexes local Markdown, stores graph metadata in SQLite, and searches body text with Tantivy.</p></div>`
-          }
+        <article class="document-body ${isEditing ? "is-editing" : ""}">
+          ${renderDocumentContent()}
         </article>
       </section>
     </section>
@@ -203,6 +215,29 @@ function renderLinkPanel(document: DocumentView) {
         </section>
       </div>
     </details>
+  `;
+}
+
+function renderDocumentContent() {
+  if (!currentDocument) {
+    return `<div class="empty-state"><h3>Start with the fixture vault</h3><p>The MVP indexes local Markdown, stores graph metadata in SQLite, and searches body text with Tantivy.</p></div>`;
+  }
+  if (!isEditing) {
+    return currentDocument.html;
+  }
+
+  return `
+    <section class="editor-pane" aria-label="Markdown editor">
+      <textarea id="note-editor" spellcheck="false" ${isSaving ? "disabled" : ""}>${escapeHtml(editSource)}</textarea>
+      <div class="editor-footer">
+        <p>${escapeHtml(currentDocument.relative_path)}</p>
+        <div class="editor-actions">
+          <button id="cancel-edit-button" class="secondary-button" type="button" ${isSaving ? "disabled" : ""}>Cancel</button>
+          <button id="save-edit-button" type="button" ${isSaving ? "disabled" : ""}>${isSaving ? "Saving..." : "Save"}</button>
+        </div>
+      </div>
+      ${editError ? `<p class="error-text">${escapeHtml(editError)}</p>` : ""}
+    </section>
   `;
 }
 
@@ -423,6 +458,20 @@ function bindEvents() {
   document.querySelector<HTMLButtonElement>("#index-button")?.addEventListener("click", indexVault);
   document.querySelector<HTMLButtonElement>("#back-button")?.addEventListener("click", navigateBack);
   document.querySelector<HTMLButtonElement>("#forward-button")?.addEventListener("click", navigateForward);
+  document.querySelector<HTMLButtonElement>("#edit-toggle-button")?.addEventListener("click", () => {
+    if (isEditing) {
+      cancelEditMode();
+      return;
+    }
+    void enterEditMode();
+  });
+  document.querySelector<HTMLTextAreaElement>("#note-editor")?.addEventListener("input", (event) => {
+    editSource = (event.target as HTMLTextAreaElement).value;
+  });
+  document.querySelector<HTMLButtonElement>("#save-edit-button")?.addEventListener("click", () => {
+    void saveEditMode();
+  });
+  document.querySelector<HTMLButtonElement>("#cancel-edit-button")?.addEventListener("click", cancelEditMode);
   document.querySelector<HTMLButtonElement>("#change-vault-button")?.addEventListener("click", () => {
     showVaultSetup = true;
     render();
@@ -521,6 +570,7 @@ async function indexVault() {
     currentStats = snapshot.stats;
     currentDocument = snapshot.first_document;
     fileBrowserSnapshot = await invoke<FileBrowserSnapshot>("file_browser");
+    resetEditState();
     backStack = [];
     forwardStack = [];
     statusText = `Indexed ${snapshot.stats.documents} documents`;
@@ -540,7 +590,7 @@ async function indexVault() {
 }
 
 async function refreshIndexInBackground(reason: "timer" | "focus" = "timer") {
-  if (appMode !== "ready" || !vaultPath || isRefreshing) {
+  if (appMode !== "ready" || !vaultPath || isRefreshing || isEditing) {
     return;
   }
   if (reason === "focus" && lastRefreshAt && Date.now() - lastRefreshAt.getTime() < AUTO_REFRESH_MS) {
@@ -609,6 +659,70 @@ async function openDocumentById(id: number, recordHistory = true) {
   render();
 }
 
+async function enterEditMode() {
+  if (!currentDocument || isSaving) {
+    return;
+  }
+
+  try {
+    editError = "";
+    statusText = `Loading source for ${currentDocument.filename}`;
+    render();
+    editSource = await invoke<string>("read_document_source", {
+      relativePath: currentDocument.relative_path,
+    });
+    isEditing = true;
+    statusText = `Editing ${currentDocument.filename}`;
+  } catch (error) {
+    editError = String(error);
+    statusText = "Edit failed";
+  }
+  render();
+}
+
+function cancelEditMode() {
+  if (!isEditing || isSaving) {
+    return;
+  }
+
+  resetEditState();
+  statusText = currentDocument ? `Opened ${currentDocument.filename}` : "Ready";
+  render();
+}
+
+async function saveEditMode() {
+  if (!currentDocument || !isEditing || isSaving) {
+    return;
+  }
+
+  const relativePath = currentDocument.relative_path;
+  try {
+    isSaving = true;
+    editError = "";
+    statusText = `Saving ${currentDocument.filename}`;
+    render();
+    const snapshot = await invoke<SaveSnapshot>("save_document_source", {
+      vaultPath,
+      relativePath,
+      source: editSource,
+    });
+    currentStats = snapshot.stats;
+    currentDocument = snapshot.document;
+    fileBrowserSnapshot = await invoke<FileBrowserSnapshot>("file_browser");
+    backStack = [];
+    forwardStack = [];
+    lastRefreshAt = new Date();
+    resetEditState();
+    statusText = `Saved ${currentDocument.filename}`;
+  } catch (error) {
+    editError = String(error);
+    statusText = "Save failed";
+  } finally {
+    isSaving = false;
+  }
+  render();
+}
+
 async function navigateBack() {
   if (!currentDocument || backStack.length === 0) {
     return;
@@ -639,8 +753,16 @@ function applyOpenedDocument(document: DocumentView, status: string, recordHisto
     forwardStack = [];
   }
 
+  resetEditState();
   currentDocument = document;
   statusText = status;
+}
+
+function resetEditState() {
+  isEditing = false;
+  isSaving = false;
+  editSource = "";
+  editError = "";
 }
 
 function startAutoRefresh() {

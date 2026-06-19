@@ -335,6 +335,56 @@ impl VaultRuntime {
         })
     }
 
+    pub fn document_source_by_relative_path(&self, relative_path: &str) -> Result<String> {
+        let conn = self.open_db()?;
+        let path = self.document_path_by_relative_path(&conn, relative_path)?;
+        let path = self.canonical_document_path(&path)?;
+        fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))
+    }
+
+    pub fn write_document_source_by_relative_path(
+        &self,
+        relative_path: &str,
+        source: &str,
+    ) -> Result<()> {
+        let conn = self.open_db()?;
+        let path = self.document_path_by_relative_path(&conn, relative_path)?;
+        let path = self.canonical_document_path(&path)?;
+        fs::write(&path, source).with_context(|| format!("write {}", path.display()))
+    }
+
+    fn document_path_by_relative_path(
+        &self,
+        conn: &Connection,
+        relative_path: &str,
+    ) -> Result<PathBuf> {
+        conn.query_row(
+            "select path from documents where relative_path = ?1",
+            [relative_path],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+        .map(PathBuf::from)
+        .with_context(|| format!("document not found: {relative_path}"))
+    }
+
+    fn canonical_document_path(&self, path: &Path) -> Result<PathBuf> {
+        let path = path
+            .canonicalize()
+            .with_context(|| format!("resolve {}", path.display()))?;
+        let root = self
+            .root
+            .canonicalize()
+            .with_context(|| format!("resolve {}", self.root.display()))?;
+        if !path.starts_with(&root) {
+            anyhow::bail!("document path is outside vault: {}", path.display());
+        }
+        if path.extension().and_then(|extension| extension.to_str()) != Some("md") {
+            anyhow::bail!("document is not a markdown file: {}", path.display());
+        }
+        Ok(path)
+    }
+
     fn rebuild(&self) -> Result<()> {
         let mut conn = self.open_db()?;
         create_schema(&conn)?;

@@ -21,6 +21,12 @@ struct RefreshSnapshot {
     stats: VaultStats,
 }
 
+#[derive(Debug, Serialize)]
+struct SaveSnapshot {
+    stats: VaultStats,
+    document: DocumentView,
+}
+
 #[tauri::command]
 fn default_fixture_path() -> String {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -138,6 +144,56 @@ fn file_browser(state: State<'_, AppState>) -> Result<FileBrowserSnapshot, Strin
     runtime.file_browser().map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+fn read_document_source(
+    state: State<'_, AppState>,
+    relative_path: String,
+) -> Result<String, String> {
+    let guard = state.runtime.lock().map_err(|_| "runtime lock poisoned")?;
+    let runtime = guard
+        .as_ref()
+        .ok_or_else(|| "Index a vault before editing notes".to_string())?;
+    runtime
+        .document_source_by_relative_path(&relative_path)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn save_document_source(
+    state: State<'_, AppState>,
+    vault_path: String,
+    relative_path: String,
+    source: String,
+) -> Result<SaveSnapshot, String> {
+    {
+        let guard = state.runtime.lock().map_err(|_| "runtime lock poisoned")?;
+        let runtime = guard
+            .as_ref()
+            .ok_or_else(|| "Index a vault before editing notes".to_string())?;
+        runtime
+            .write_document_source_by_relative_path(&relative_path, &source)
+            .map_err(|error| error.to_string())?;
+    }
+
+    let state_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("mvv-state");
+    let snapshot = tauri::async_runtime::spawn_blocking(move || {
+        let runtime = VaultRuntime::build(&vault_path, state_dir)?;
+        let stats = runtime.stats()?;
+        let document = runtime.open_by_relative_path(&relative_path)?;
+
+        Ok::<_, anyhow::Error>((runtime, stats, document))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+    .map_err(|error| error.to_string())?;
+
+    let (runtime, stats, document) = snapshot;
+    *state.runtime.lock().map_err(|_| "runtime lock poisoned")? = Some(runtime);
+    Ok(SaveSnapshot { stats, document })
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState::default())
@@ -149,7 +205,9 @@ pub fn run() {
             open_document,
             open_document_by_id,
             open_document_by_path,
-            file_browser
+            file_browser,
+            read_document_source,
+            save_document_source
         ])
         .run(tauri::generate_context!())
         .expect("error while running Mega Vault Viewer");

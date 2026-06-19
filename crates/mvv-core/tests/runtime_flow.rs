@@ -109,6 +109,47 @@ slug: 20260619-0600-daily
 }
 
 #[test]
+fn reads_and_writes_raw_document_source_by_relative_path() {
+    let temp = tempfile::tempdir().unwrap();
+    let vault = temp.path().join("vault");
+    let notes = vault.join("10_notes/2026-06");
+    fs::create_dir_all(&notes).unwrap();
+    let note_path = notes.join("20260617-0900-alpha.md");
+
+    fs::write(
+        &note_path,
+        r#"---
+title: Alpha Note
+slug: 20260617-0900-alpha
+---
+
+# Alpha Note
+
+Original body.
+"#,
+    )
+    .unwrap();
+
+    let runtime = VaultRuntime::build(&vault, temp.path().join("state")).unwrap();
+    let relative_path = "10_notes/2026-06/20260617-0900-alpha.md";
+    let source = runtime
+        .document_source_by_relative_path(relative_path)
+        .unwrap();
+    assert!(source.contains("title: Alpha Note"));
+    assert!(source.contains("Original body."));
+
+    let updated_source = source.replace("Original body.", "Updated body.");
+    runtime
+        .write_document_source_by_relative_path(relative_path, &updated_source)
+        .unwrap();
+
+    let written = fs::read_to_string(note_path).unwrap();
+    assert!(written.contains("title: Alpha Note"));
+    assert!(written.contains("Updated body."));
+    assert!(!written.contains("Original body."));
+}
+
+#[test]
 fn indexes_duplicate_slugs_without_aborting_the_vault() {
     let temp = tempfile::tempdir().unwrap();
     let vault = temp.path().join("vault");
