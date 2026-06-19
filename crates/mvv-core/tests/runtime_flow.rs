@@ -55,3 +55,34 @@ Backlinked content for the local viewer.
     assert_eq!(beta.backlinks, vec!["20260617-0900-alpha"]);
     assert!(beta.html.contains("Beta Note"));
 }
+
+#[test]
+fn indexes_duplicate_slugs_without_aborting_the_vault() {
+    let temp = tempfile::tempdir().unwrap();
+    let vault = temp.path().join("vault");
+    fs::create_dir_all(vault.join("a")).unwrap();
+    fs::create_dir_all(vault.join("b")).unwrap();
+
+    for folder in ["a", "b"] {
+        fs::write(
+            vault.join(folder).join("duplicate.md"),
+            r#"---
+title: Duplicate Note
+slug: duplicate-note
+---
+
+# Duplicate Note
+
+Same slug in two source paths.
+"#,
+        )
+        .unwrap();
+    }
+
+    let runtime = VaultRuntime::build(&vault, temp.path().join("state")).unwrap();
+
+    let stats = runtime.stats().unwrap();
+    assert_eq!(stats.documents, 2);
+    let opened = runtime.open_by_slug("duplicate-note").unwrap();
+    assert_eq!(opened.slug, "duplicate-note");
+}

@@ -1,5 +1,7 @@
 use std::fs;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use anyhow::{Context, Result};
 use pulldown_cmark::{html, Options, Parser};
@@ -51,7 +53,6 @@ struct IndexedDocument {
     title: String,
     path: PathBuf,
     body: String,
-    html: String,
     links: Vec<WikiLink>,
 }
 
@@ -139,15 +140,16 @@ impl VaultRuntime {
         let conn = self.open_db()?;
         let doc = conn
             .query_row(
-                "select id, slug, title, path, html from documents where slug = ?1",
+                "select id, slug, title, path, body from documents where slug = ?1 order by path limit 1",
                 [slug],
                 |row| {
+                    let body: String = row.get(4)?;
                     Ok(DocumentView {
                         id: row.get(0)?,
                         slug: row.get(1)?,
                         title: row.get(2)?,
                         path: PathBuf::from(row.get::<_, String>(3)?),
-                        html: row.get(4)?,
+                        html: render_markdown(&body),
                         outgoing_links: Vec::new(),
                         backlinks: Vec::new(),
                     })
@@ -187,39 +189,42 @@ impl VaultRuntime {
     }
 
     fn rebuild(&self) -> Result<()> {
-        let conn = self.open_db()?;
+        let mut conn = self.open_db()?;
         create_schema(&conn)?;
-
-        let documents = discover_documents(&self.root)?;
         let (index, fields) = create_search_index(&self.index_dir)?;
         let mut writer = index.writer(50_000_000).context("create tantivy writer")?;
+        let tx = conn.transaction().context("start sqlite index transaction")?;
 
-        for document in documents {
-            conn.execute(
-                "insert into documents (slug, title, path, body, html) values (?1, ?2, ?3, ?4, ?5)",
-                params![
+        {
+            let mut insert_document = tx.prepare(
+                "insert into documents (slug, title, path, body) values (?1, ?2, ?3, ?4)",
+            )?;
+            let mut insert_link = tx.prepare(
+                "insert into links (source_slug, target_slug, label) values (?1, ?2, ?3)",
+            )?;
+
+            for path in discover_markdown_paths(&self.root)? {
+                let document = parse_markdown(&path)?;
+                insert_document.execute(params![
                     document.slug,
                     document.title,
                     document.path.to_string_lossy(),
                     document.body,
-                    document.html
-                ],
-            )?;
-            let id = conn.last_insert_rowid();
-            for link in &document.links {
-                conn.execute(
-                    "insert into links (source_slug, target_slug, label) values (?1, ?2, ?3)",
-                    params![document.slug, link.target, link.label],
-                )?;
+                ])?;
+                let id = tx.last_insert_rowid();
+                for link in &document.links {
+                    insert_link.execute(params![document.slug, link.target, link.label])?;
+                }
+                writer.add_document(doc!(
+                    fields.id => id as u64,
+                    fields.slug => document.slug,
+                    fields.title => document.title,
+                    fields.body => document.body,
+                ))?;
             }
-            writer.add_document(doc!(
-                fields.id => id as u64,
-                fields.slug => document.slug,
-                fields.title => document.title,
-                fields.body => document.body,
-            ))?;
         }
 
+        tx.commit().context("commit sqlite index transaction")?;
         writer.commit().context("commit tantivy index")?;
         Ok(())
     }
@@ -241,11 +246,10 @@ fn create_schema(conn: &Connection) -> Result<()> {
         r#"
         create table documents (
           id integer primary key autoincrement,
-          slug text not null unique,
+          slug text not null,
           title text not null,
           path text not null,
-          body text not null,
-          html text not null
+          body text not null
         );
         create table links (
           id integer primary key autoincrement,
@@ -253,6 +257,7 @@ fn create_schema(conn: &Connection) -> Result<()> {
           target_slug text not null,
           label text not null
         );
+        create index documents_slug on documents(slug);
         create index links_source on links(source_slug);
         create index links_target on links(target_slug);
         "#,
@@ -260,17 +265,17 @@ fn create_schema(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn discover_documents(root: &Path) -> Result<Vec<IndexedDocument>> {
-    let mut documents = Vec::new();
+fn discover_markdown_paths(root: &Path) -> Result<Vec<PathBuf>> {
+    let mut paths = Vec::new();
     for entry in WalkDir::new(root).into_iter().filter_map(Result::ok) {
         let path = entry.path();
         if !entry.file_type().is_file() || path.extension().and_then(|ext| ext.to_str()) != Some("md") {
             continue;
         }
-        documents.push(parse_markdown(path)?);
+        paths.push(path.to_path_buf());
     }
-    documents.sort_by(|left, right| left.slug.cmp(&right.slug));
-    Ok(documents)
+    paths.sort();
+    Ok(paths)
 }
 
 fn parse_markdown(path: &Path) -> Result<IndexedDocument> {
@@ -295,14 +300,12 @@ fn parse_markdown(path: &Path) -> Result<IndexedDocument> {
                 .to_string()
         });
     let links = extract_wikilinks(&body);
-    let html = render_markdown(&body);
 
     Ok(IndexedDocument {
         slug,
         title,
         path: path.to_path_buf(),
         body,
-        html,
         links,
     })
 }
@@ -367,10 +370,36 @@ fn render_markdown(body: &str) -> String {
             .unwrap_or(target);
         format!("[{label}](mvv://open/{target})")
     });
-    let parser = Parser::new_ext(&markdown, Options::all());
-    let mut rendered = String::new();
-    html::push_html(&mut rendered, parser);
-    rendered
+    catch_unwind_silent(|| {
+        let parser = Parser::new_ext(&markdown, Options::all());
+        let mut rendered = String::new();
+        html::push_html(&mut rendered, parser);
+        rendered
+    })
+    .unwrap_or_else(|_| render_plaintext_fallback(body))
+}
+
+fn catch_unwind_silent<T>(f: impl FnOnce() -> T) -> std::thread::Result<T> {
+    static PANIC_HOOK_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    let lock = PANIC_HOOK_LOCK.get_or_init(|| Mutex::new(()));
+    let _guard = lock.lock().expect("panic hook lock poisoned");
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let result = catch_unwind(AssertUnwindSafe(f));
+    std::panic::set_hook(hook);
+    result
+}
+
+fn render_plaintext_fallback(body: &str) -> String {
+    format!("<pre>{}</pre>", escape_html(body))
+}
+
+fn escape_html(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 fn create_search_index(index_dir: &Path) -> Result<(Index, SearchFields)> {
