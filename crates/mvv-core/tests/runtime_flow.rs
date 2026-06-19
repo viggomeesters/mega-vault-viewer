@@ -77,6 +77,20 @@ Backlinked content for the local viewer.
     assert_eq!(frontmatter["category"].as_str(), Some("tool"));
     assert_eq!(frontmatter["topics"][0].as_str(), Some("viewer"));
     assert_eq!(alpha.frontmatter_error, None);
+
+    let browser = runtime.file_browser().unwrap();
+    assert!(browser
+        .folders
+        .iter()
+        .any(|folder| folder.path == "10_notes/2026-06" && folder.document_count == 2));
+    assert!(browser
+        .newest_files
+        .iter()
+        .any(|file| file.filename == "20260617-0915-beta.md"));
+    assert!(browser
+        .recent_files
+        .iter()
+        .any(|file| file.relative_path == "10_notes/2026-06/20260617-0900-alpha.md"));
 }
 
 #[test]

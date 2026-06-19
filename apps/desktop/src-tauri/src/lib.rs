@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use mvv_core::{DocumentView, SearchHit, VaultRuntime, VaultStats};
+use mvv_core::{DocumentView, FileBrowserSnapshot, SearchHit, VaultRuntime, VaultStats};
 use serde::Serialize;
 use tauri::State;
 
@@ -129,6 +129,15 @@ fn open_document_by_path(
         .map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+fn file_browser(state: State<'_, AppState>) -> Result<FileBrowserSnapshot, String> {
+    let guard = state.runtime.lock().map_err(|_| "runtime lock poisoned")?;
+    let runtime = guard
+        .as_ref()
+        .ok_or_else(|| "Index a vault before browsing files".to_string())?;
+    runtime.file_browser().map_err(|error| error.to_string())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState::default())
@@ -139,7 +148,8 @@ pub fn run() {
             search,
             open_document,
             open_document_by_id,
-            open_document_by_path
+            open_document_by_path,
+            file_browser
         ])
         .run(tauri::generate_context!())
         .expect("error while running Mega Vault Viewer");

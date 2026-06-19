@@ -2,6 +2,7 @@ use std::fs;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
+use std::time::UNIX_EPOCH;
 
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose, Engine as _};
@@ -50,6 +51,31 @@ pub struct DocumentView {
     pub frontmatter_error: Option<String>,
     pub outgoing_links: Vec<String>,
     pub backlinks: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FileBrowserItem {
+    pub id: i64,
+    pub slug: String,
+    pub title: String,
+    pub filename: String,
+    pub relative_path: String,
+    pub modified_at: Option<u64>,
+    pub created_at: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FolderEntry {
+    pub path: String,
+    pub document_count: usize,
+    pub files: Vec<FileBrowserItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FileBrowserSnapshot {
+    pub folders: Vec<FolderEntry>,
+    pub newest_files: Vec<FileBrowserItem>,
+    pub recent_files: Vec<FileBrowserItem>,
 }
 
 #[derive(Debug, Clone)]
@@ -251,6 +277,51 @@ impl VaultRuntime {
             )
             .optional()?;
         slug.map(|slug| self.open_by_slug(&slug)).transpose()
+    }
+
+    pub fn file_browser(&self) -> Result<FileBrowserSnapshot> {
+        let conn = self.open_db()?;
+        let mut statement = conn.prepare(
+            "select id, slug, title, filename, path, relative_path from documents order by relative_path",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+            ))
+        })?;
+
+        let mut files = Vec::new();
+        for row in rows {
+            let (id, slug, title, filename, path, relative_path) = row?;
+            files.push(file_browser_item(
+                id,
+                slug,
+                title,
+                filename,
+                Path::new(&path),
+                relative_path,
+            ));
+        }
+
+        let folders = folder_entries(&files);
+        let mut newest_files = files.clone();
+        newest_files.sort_by_key(|file| std::cmp::Reverse(file.created_at.unwrap_or(0)));
+        newest_files.truncate(40);
+
+        let mut recent_files = files;
+        recent_files.sort_by_key(|file| std::cmp::Reverse(file.modified_at.unwrap_or(0)));
+        recent_files.truncate(40);
+
+        Ok(FileBrowserSnapshot {
+            folders,
+            newest_files,
+            recent_files,
+        })
     }
 
     fn rebuild(&self) -> Result<()> {
@@ -787,6 +858,88 @@ fn collect_strings(conn: &Connection, sql: &str, value: &str) -> Result<Vec<Stri
     let rows = statement.query_map([value], |row| row.get::<_, String>(0))?;
     rows.collect::<rusqlite::Result<Vec<_>>>()
         .map_err(Into::into)
+}
+
+fn file_browser_item(
+    id: i64,
+    slug: String,
+    title: String,
+    filename: String,
+    path: &Path,
+    relative_path: String,
+) -> FileBrowserItem {
+    let metadata = fs::metadata(path).ok();
+    let modified_at = metadata
+        .as_ref()
+        .and_then(|metadata| metadata.modified().ok())
+        .and_then(system_time_seconds);
+    let created_at = metadata
+        .as_ref()
+        .and_then(|metadata| metadata.created().ok())
+        .and_then(system_time_seconds)
+        .or_else(|| timestamp_from_filename(&filename));
+
+    FileBrowserItem {
+        id,
+        slug,
+        title,
+        filename,
+        relative_path,
+        modified_at,
+        created_at,
+    }
+}
+
+fn folder_entries(files: &[FileBrowserItem]) -> Vec<FolderEntry> {
+    use std::collections::BTreeMap;
+
+    let mut grouped: BTreeMap<String, Vec<FileBrowserItem>> = BTreeMap::new();
+    for file in files {
+        let folder = Path::new(&file.relative_path)
+            .parent()
+            .map(|path| path.to_string_lossy().replace('\\', "/"))
+            .filter(|path| !path.is_empty())
+            .unwrap_or_else(|| "/".to_string());
+        grouped.entry(folder).or_default().push(file.clone());
+    }
+
+    let mut folders = grouped
+        .into_iter()
+        .map(|(path, mut files)| {
+            files.sort_by(|a, b| a.filename.cmp(&b.filename));
+            let document_count = files.len();
+            files.truncate(8);
+            FolderEntry {
+                path,
+                document_count,
+                files,
+            }
+        })
+        .collect::<Vec<_>>();
+    folders.sort_by(|a, b| a.path.cmp(&b.path));
+    folders.truncate(80);
+    folders
+}
+
+fn system_time_seconds(time: std::time::SystemTime) -> Option<u64> {
+    time.duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_secs())
+}
+
+fn timestamp_from_filename(filename: &str) -> Option<u64> {
+    let digits = filename
+        .chars()
+        .take_while(|character| character.is_ascii_digit() || *character == '-')
+        .filter(|character| character.is_ascii_digit())
+        .collect::<String>();
+    if digits.len() >= 12 {
+        digits[..12].parse().ok()
+    } else if digits.len() >= 8 {
+        digits[..8].parse().ok()
+    } else {
+        None
+    }
 }
 
 fn snippet_for(body: &str) -> String {

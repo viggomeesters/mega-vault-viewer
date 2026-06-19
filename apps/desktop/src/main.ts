@@ -35,6 +35,28 @@ type DocumentView = {
   backlinks: string[];
 };
 
+type FileBrowserItem = {
+  id: number;
+  slug: string;
+  title: string;
+  filename: string;
+  relative_path: string;
+  modified_at: number | null;
+  created_at: number | null;
+};
+
+type FolderEntry = {
+  path: string;
+  document_count: number;
+  files: FileBrowserItem[];
+};
+
+type FileBrowserSnapshot = {
+  folders: FolderEntry[];
+  newest_files: FileBrowserItem[];
+  recent_files: FileBrowserItem[];
+};
+
 type IndexSnapshot = {
   stats: VaultStats;
   first_document: DocumentView | null;
@@ -45,6 +67,7 @@ type RefreshSnapshot = {
 };
 
 type AppMode = "setup" | "indexing" | "ready" | "error";
+type FileViewMode = "folders" | "newest" | "recent";
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
@@ -57,6 +80,8 @@ const appRoot = app;
 let currentDocument: DocumentView | null = null;
 let currentStats: VaultStats | null = null;
 let searchResults: SearchHit[] = [];
+let fileBrowserSnapshot: FileBrowserSnapshot | null = null;
+let fileViewMode: FileViewMode = "folders";
 let statusText = "Ready";
 let vaultPath = "";
 let appMode: AppMode = "setup";
@@ -88,11 +113,11 @@ function render() {
 
         <label class="field">
           <span>Search</span>
-          <input id="search-box" name="search" placeholder="Search title, body, slug" spellcheck="false" />
+          <input id="search-box" name="search" value="${escapeAttribute(currentSearchQuery)}" placeholder="Search title, body, slug" spellcheck="false" />
         </label>
 
         <div class="results" aria-label="Search results">
-          ${searchResults.map(renderSearchHit).join("") || `<p class="empty">Index a vault, then search.</p>`}
+          ${renderSidebarExplorer()}
         </div>
       </aside>
 
@@ -229,6 +254,79 @@ function renderSearchHit(hit: SearchHit) {
   `;
 }
 
+function renderSidebarExplorer() {
+  const hasSearch = currentSearchQuery.trim().length > 0;
+  return `
+    ${
+      hasSearch
+        ? `<section class="sidebar-section"><h3>Search results</h3>${searchResults.map(renderSearchHit).join("") || `<p class="empty">No results.</p>`}</section>`
+        : ""
+    }
+    <section class="file-viewer" aria-label="File viewer">
+      <div class="file-viewer-header">
+        <h3>Files</h3>
+        <div class="file-tabs" role="tablist" aria-label="File views">
+          ${renderFileTab("folders", "Folders")}
+          ${renderFileTab("newest", "Newest")}
+          ${renderFileTab("recent", "Recent")}
+        </div>
+      </div>
+      ${renderFileViewContent()}
+    </section>
+  `;
+}
+
+function renderFileTab(mode: FileViewMode, label: string) {
+  return `
+    <button class="file-tab ${fileViewMode === mode ? "is-active" : ""}" type="button" data-file-view="${mode}" role="tab" aria-selected="${fileViewMode === mode}">
+      ${escapeHtml(label)}
+    </button>
+  `;
+}
+
+function renderFileViewContent() {
+  if (!fileBrowserSnapshot) {
+    return `<p class="empty">Index a vault to browse files.</p>`;
+  }
+  if (fileViewMode === "folders") {
+    return `
+      <div class="folder-list">
+        ${fileBrowserSnapshot.folders.map(renderFolderEntry).join("") || `<p class="empty">No folders.</p>`}
+      </div>
+    `;
+  }
+
+  const files = fileViewMode === "newest" ? fileBrowserSnapshot.newest_files : fileBrowserSnapshot.recent_files;
+  return `
+    <div class="file-list">
+      ${files.map(renderFileItem).join("") || `<p class="empty">No files.</p>`}
+    </div>
+  `;
+}
+
+function renderFolderEntry(folder: FolderEntry) {
+  return `
+    <details class="folder-entry">
+      <summary>
+        <span>${escapeHtml(folder.path)}</span>
+        <small>${folder.document_count}</small>
+      </summary>
+      <div class="folder-files">
+        ${folder.files.map(renderFileItem).join("")}
+      </div>
+    </details>
+  `;
+}
+
+function renderFileItem(file: FileBrowserItem) {
+  return `
+    <button class="file-item" type="button" data-doc-id="${file.id}" title="${escapeAttribute(file.relative_path)}">
+      <strong>${escapeHtml(file.filename)}</strong>
+      <span>${escapeHtml(file.relative_path)}</span>
+    </button>
+  `;
+}
+
 function renderVaultSetup() {
   if (appMode === "ready" && !showVaultSetup) {
     return `
@@ -278,9 +376,22 @@ function bindEvents() {
     vaultPath = (event.target as HTMLInputElement).value;
   });
   document.querySelector<HTMLInputElement>("#search-box")?.addEventListener("keydown", (event) => {
+    currentSearchQuery = (event.target as HTMLInputElement).value;
     if (event.key === "Enter") {
-      void runSearch((event.target as HTMLInputElement).value);
+      void runSearch(currentSearchQuery);
     }
+  });
+  document.querySelector<HTMLInputElement>("#search-box")?.addEventListener("input", (event) => {
+    currentSearchQuery = (event.target as HTMLInputElement).value;
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-file-view]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const mode = button.dataset.fileView;
+      if (mode === "folders" || mode === "newest" || mode === "recent") {
+        fileViewMode = mode;
+        render();
+      }
+    });
   });
   document.querySelectorAll<HTMLButtonElement>("[data-slug]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -325,6 +436,7 @@ async function indexVault() {
     const snapshot = await invoke<IndexSnapshot>("index_vault", { vaultPath });
     currentStats = snapshot.stats;
     currentDocument = snapshot.first_document;
+    fileBrowserSnapshot = await invoke<FileBrowserSnapshot>("file_browser");
     backStack = [];
     forwardStack = [];
     statusText = `Indexed ${snapshot.stats.documents} documents`;
@@ -359,6 +471,7 @@ async function refreshIndexInBackground(reason: "timer" | "focus" = "timer") {
   try {
     const snapshot = await invoke<RefreshSnapshot>("refresh_index", { vaultPath });
     currentStats = snapshot.stats;
+    fileBrowserSnapshot = await invoke<FileBrowserSnapshot>("file_browser");
     lastRefreshAt = new Date();
 
     if (openPath) {
