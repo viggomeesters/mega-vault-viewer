@@ -555,7 +555,7 @@ function bindEvents() {
 }
 
 async function loadDefaultPath() {
-  vaultPath = await invoke<string>("default_fixture_path");
+  vaultPath = await invoke<string>("default_vault_path");
   render();
 }
 

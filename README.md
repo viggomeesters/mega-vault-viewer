@@ -18,7 +18,8 @@ npm install
 npm run desktop:dev
 ```
 
-The app defaults to the fixture vault. Replace the path with any local folder containing `.md` files.
+The app defaults to `/Users/viggomeesters/Library/Mobile Documents/iCloud~md~obsidian/Documents/vault`.
+Replace the path with any local folder containing `.md` files when needed.
 
 ## Build macOS App
 

@@ -5,6 +5,9 @@ use mvv_core::{DocumentView, FileBrowserSnapshot, SearchHit, VaultRuntime, Vault
 use serde::Serialize;
 use tauri::State;
 
+const DEFAULT_VAULT_PATH: &str =
+    "/Users/viggomeesters/Library/Mobile Documents/iCloud~md~obsidian/Documents/vault";
+
 #[derive(Default)]
 struct AppState {
     runtime: Mutex<Option<VaultRuntime>>,
@@ -28,14 +31,8 @@ struct SaveSnapshot {
 }
 
 #[tauri::command]
-fn default_fixture_path() -> String {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../..")
-        .join("fixtures/demo-vault")
-        .canonicalize()
-        .unwrap_or_else(|_| PathBuf::from("fixtures/demo-vault"))
-        .to_string_lossy()
-        .to_string()
+fn default_vault_path() -> String {
+    DEFAULT_VAULT_PATH.to_string()
 }
 
 #[tauri::command]
@@ -198,7 +195,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
-            default_fixture_path,
+            default_vault_path,
             index_vault,
             refresh_index,
             search,
@@ -211,4 +208,17 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Mega Vault Viewer");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn defaults_to_viggos_obsidian_vault() {
+        assert_eq!(
+            default_vault_path(),
+            "/Users/viggomeesters/Library/Mobile Documents/iCloud~md~obsidian/Documents/vault"
+        );
+    }
 }
