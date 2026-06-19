@@ -58,6 +58,8 @@ let vaultPath = "";
 let appMode: AppMode = "setup";
 let showVaultSetup = true;
 let lastError = "";
+let backStack: number[] = [];
+let forwardStack: number[] = [];
 
 const formatScore = new Intl.NumberFormat("en", {
   maximumFractionDigits: 2,
@@ -91,7 +93,13 @@ function render() {
             <h2>${escapeHtml(currentDocument?.filename ?? "No document open")}</h2>
             ${currentDocument ? `<p class="document-title">${escapeHtml(currentDocument.title)}</p>` : ""}
           </div>
-          <code title="${escapeAttribute(currentDocument?.path ?? "mvv://local")}">${escapeHtml(currentDocument?.relative_path ?? "mvv://local")}</code>
+          <div class="document-actions">
+            <div class="nav-buttons" aria-label="Document navigation">
+              <button id="back-button" type="button" title="Back" aria-label="Back" ${backStack.length === 0 ? "disabled" : ""}>&lt;</button>
+              <button id="forward-button" type="button" title="Forward" aria-label="Forward" ${forwardStack.length === 0 ? "disabled" : ""}>&gt;</button>
+            </div>
+            <code title="${escapeAttribute(currentDocument?.path ?? "mvv://local")}">${escapeHtml(currentDocument?.relative_path ?? "mvv://local")}</code>
+          </div>
         </header>
 
         ${currentDocument ? renderMetadataPanel(currentDocument) : ""}
@@ -239,6 +247,8 @@ function renderSlugButton(slug: string) {
 function bindEvents() {
   document.querySelector<HTMLButtonElement>("#index-button")?.addEventListener("click", indexVault);
   document.querySelector<HTMLButtonElement>("#reindex-button")?.addEventListener("click", indexVault);
+  document.querySelector<HTMLButtonElement>("#back-button")?.addEventListener("click", navigateBack);
+  document.querySelector<HTMLButtonElement>("#forward-button")?.addEventListener("click", navigateForward);
   document.querySelector<HTMLButtonElement>("#change-vault-button")?.addEventListener("click", () => {
     showVaultSetup = true;
     render();
@@ -293,6 +303,8 @@ async function indexVault() {
     const snapshot = await invoke<IndexSnapshot>("index_vault", { vaultPath });
     currentStats = snapshot.stats;
     currentDocument = snapshot.first_document;
+    backStack = [];
+    forwardStack = [];
     statusText = `Indexed ${snapshot.stats.documents} documents`;
     searchResults = [];
     appMode = "ready";
@@ -318,24 +330,58 @@ async function runSearch(query: string) {
   render();
 }
 
-async function openDocument(slug: string) {
+async function openDocument(slug: string, recordHistory = true) {
   try {
-    currentDocument = await invoke<DocumentView>("open_document", { slug });
-    statusText = `Opened ${slug}`;
+    const document = await invoke<DocumentView>("open_document", { slug });
+    applyOpenedDocument(document, `Opened ${document.filename}`, recordHistory);
   } catch (error) {
     statusText = String(error);
   }
   render();
 }
 
-async function openDocumentById(id: number) {
+async function openDocumentById(id: number, recordHistory = true) {
   try {
-    currentDocument = await invoke<DocumentView>("open_document_by_id", { id });
-    statusText = `Opened ${currentDocument.filename}`;
+    const document = await invoke<DocumentView>("open_document_by_id", { id });
+    applyOpenedDocument(document, `Opened ${document.filename}`, recordHistory);
   } catch (error) {
     statusText = String(error);
   }
   render();
+}
+
+async function navigateBack() {
+  if (!currentDocument || backStack.length === 0) {
+    return;
+  }
+
+  const id = backStack.pop();
+  forwardStack.push(currentDocument.id);
+  if (id !== undefined) {
+    await openDocumentById(id, false);
+  }
+}
+
+async function navigateForward() {
+  if (!currentDocument || forwardStack.length === 0) {
+    return;
+  }
+
+  const id = forwardStack.pop();
+  backStack.push(currentDocument.id);
+  if (id !== undefined) {
+    await openDocumentById(id, false);
+  }
+}
+
+function applyOpenedDocument(document: DocumentView, status: string, recordHistory: boolean) {
+  if (recordHistory && currentDocument && currentDocument.id !== document.id) {
+    backStack.push(currentDocument.id);
+    forwardStack = [];
+  }
+
+  currentDocument = document;
+  statusText = status;
 }
 
 function escapeHtml(value: string) {
@@ -364,3 +410,17 @@ function formatStats(stats: VaultStats | null) {
 }
 
 void loadDefaultPath();
+
+document.addEventListener("keydown", (event) => {
+  if (!event.metaKey || event.shiftKey || event.altKey || event.ctrlKey) {
+    return;
+  }
+  if (event.key === "[") {
+    event.preventDefault();
+    void navigateBack();
+  }
+  if (event.key === "]") {
+    event.preventDefault();
+    void navigateForward();
+  }
+});

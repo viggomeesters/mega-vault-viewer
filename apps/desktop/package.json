@@ -8,6 +8,7 @@
     "build:web": "vite build",
     "build": "tsc --noEmit && vite build",
     "test": "tsc --noEmit",
+    "desktop:build": "tauri build --bundles app",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build --bundles app"

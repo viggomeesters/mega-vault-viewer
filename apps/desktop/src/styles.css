@@ -263,8 +263,40 @@ a:focus-visible {
   padding: 22px 28px;
 }
 
-.document-header code {
+.document-actions {
+  display: grid;
+  min-width: 180px;
   max-width: 46%;
+  justify-items: end;
+  gap: 8px;
+}
+
+.nav-buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.nav-buttons button {
+  width: 34px;
+  min-height: 32px;
+  border-color: #39434c;
+  background: #20262b;
+  color: #dbe6ed;
+  font-size: 21px;
+  line-height: 1;
+}
+
+.nav-buttons button:hover {
+  background: #293138;
+}
+
+.nav-buttons button:disabled {
+  background: #171b1f;
+  color: #65717c;
+}
+
+.document-header code {
+  max-width: 100%;
   overflow: hidden;
   color: #9ba7b2;
   font-size: 12px;
@@ -438,5 +470,10 @@ a:focus-visible {
 
   .document-header code {
     max-width: 100%;
+  }
+
+  .document-actions {
+    max-width: 100%;
+    justify-items: start;
   }
 }
