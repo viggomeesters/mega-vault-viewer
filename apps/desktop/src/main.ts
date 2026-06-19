@@ -103,6 +103,7 @@ function render() {
         </header>
 
         ${currentDocument ? renderMetadataPanel(currentDocument) : ""}
+        ${currentDocument ? renderLinkPanel(currentDocument) : ""}
 
         <article class="document-body">
           ${
@@ -111,17 +112,6 @@ function render() {
               : `<div class="empty-state"><h3>Start with the fixture vault</h3><p>The MVP indexes local Markdown, stores graph metadata in SQLite, and searches body text with Tantivy.</p></div>`
           }
         </article>
-
-        <footer class="link-strip">
-          <div>
-            <strong>Backlinks</strong>
-            <span>${currentDocument?.backlinks.map(renderSlugButton).join("") || "None"}</span>
-          </div>
-          <div>
-            <strong>Outgoing</strong>
-            <span>${currentDocument?.outgoing_links.map(renderSlugButton).join("") || "None"}</span>
-          </div>
-        </footer>
       </section>
     </section>
   `;
@@ -139,6 +129,29 @@ function renderMetadataPanel(document: DocumentView) {
       <dl>
         ${renderMetadataRows(document)}
       </dl>
+    </details>
+  `;
+}
+
+function renderLinkPanel(document: DocumentView) {
+  const backlinks = document.backlinks.length;
+  const outgoing = document.outgoing_links.length;
+  return `
+    <details class="link-panel">
+      <summary>
+        <span>Links</span>
+        <small>${backlinks} back, ${outgoing} out</small>
+      </summary>
+      <div class="link-groups">
+        <section>
+          <strong>Backlinks</strong>
+          <div>${document.backlinks.map(renderSlugButton).join("") || `<span class="empty-inline">None</span>`}</div>
+        </section>
+        <section>
+          <strong>Outgoing</strong>
+          <div>${document.outgoing_links.map(renderSlugButton).join("") || `<span class="empty-inline">None</span>`}</div>
+        </section>
+      </div>
     </details>
   `;
 }
