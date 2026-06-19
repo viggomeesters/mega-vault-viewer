@@ -10,6 +10,10 @@ type SearchHit = {
   id: number;
   slug: string;
   title: string;
+  filename: string;
+  stem: string;
+  path: string;
+  relative_path: string;
   snippet: string;
   score: number;
 };
@@ -18,7 +22,10 @@ type DocumentView = {
   id: number;
   slug: string;
   title: string;
+  filename: string;
+  stem: string;
   path: string;
+  relative_path: string;
   html: string;
   outgoing_links: string[];
   backlinks: string[];
@@ -77,9 +84,10 @@ function render() {
         <header class="document-header">
           <div>
             <p class="status">${escapeHtml(statusText)}</p>
-            <h2>${escapeHtml(currentDocument?.title ?? "No document open")}</h2>
+            <h2>${escapeHtml(currentDocument?.filename ?? "No document open")}</h2>
+            ${currentDocument ? `<p class="document-title">${escapeHtml(currentDocument.title)}</p>` : ""}
           </div>
-          <code>${escapeHtml(currentDocument?.slug ?? "mvv://local")}</code>
+          <code title="${escapeAttribute(currentDocument?.path ?? "mvv://local")}">${escapeHtml(currentDocument?.relative_path ?? "mvv://local")}</code>
         </header>
 
         <article class="document-body">
@@ -109,10 +117,11 @@ function render() {
 
 function renderSearchHit(hit: SearchHit) {
   return `
-    <button class="result" type="button" data-slug="${escapeAttribute(hit.slug)}">
-      <strong>${escapeHtml(hit.title)}</strong>
+    <button class="result" type="button" data-doc-id="${hit.id}">
+      <strong title="${escapeAttribute(hit.filename)}">${escapeHtml(hit.filename)}</strong>
+      <em title="${escapeAttribute(hit.relative_path)}">${escapeHtml(hit.relative_path)}</em>
       <span>${escapeHtml(hit.snippet)}</span>
-      <small>${escapeHtml(hit.slug)} · ${formatScore.format(hit.score)}</small>
+      <small>${escapeHtml(hit.title)} · ${escapeHtml(hit.slug)} · ${formatScore.format(hit.score)}</small>
     </button>
   `;
 }
@@ -178,6 +187,14 @@ function bindEvents() {
       }
     });
   });
+  document.querySelectorAll<HTMLButtonElement>("[data-doc-id]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const id = Number(button.dataset.docId);
+      if (Number.isFinite(id)) {
+        void openDocumentById(id);
+      }
+    });
+  });
   document.querySelector<HTMLElement>(".document-body")?.addEventListener("click", (event) => {
     const target = event.target as HTMLElement;
     const link = target.closest<HTMLAnchorElement>('a[href^="mvv://open/"]');
@@ -233,6 +250,16 @@ async function openDocument(slug: string) {
   try {
     currentDocument = await invoke<DocumentView>("open_document", { slug });
     statusText = `Opened ${slug}`;
+  } catch (error) {
+    statusText = String(error);
+  }
+  render();
+}
+
+async function openDocumentById(id: number) {
+  try {
+    currentDocument = await invoke<DocumentView>("open_document_by_id", { id });
+    statusText = `Opened ${currentDocument.filename}`;
   } catch (error) {
     statusText = String(error);
   }

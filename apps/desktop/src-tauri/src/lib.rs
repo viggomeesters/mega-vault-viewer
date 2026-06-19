@@ -77,6 +77,15 @@ fn open_document(state: State<'_, AppState>, slug: String) -> Result<DocumentVie
         .map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+fn open_document_by_id(state: State<'_, AppState>, id: i64) -> Result<DocumentView, String> {
+    let guard = state.runtime.lock().map_err(|_| "runtime lock poisoned")?;
+    let runtime = guard
+        .as_ref()
+        .ok_or_else(|| "Index a vault before opening notes".to_string())?;
+    runtime.open_by_id(id).map_err(|error| error.to_string())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState::default())
@@ -84,7 +93,8 @@ pub fn run() {
             default_fixture_path,
             index_vault,
             search,
-            open_document
+            open_document,
+            open_document_by_id
         ])
         .run(tauri::generate_context!())
         .expect("error while running Mega Vault Viewer");

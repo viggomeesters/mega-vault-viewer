@@ -10,7 +10,9 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use tantivy::collector::TopDocs;
 use tantivy::query::QueryParser;
-use tantivy::schema::{Field, OwnedValue, Schema, TantivyDocument, FAST, INDEXED, STORED, STRING, TEXT};
+use tantivy::schema::{
+    Field, OwnedValue, Schema, TantivyDocument, FAST, INDEXED, STORED, STRING, TEXT,
+};
 use tantivy::{doc, Index};
 use walkdir::WalkDir;
 
@@ -25,6 +27,10 @@ pub struct SearchHit {
     pub id: i64,
     pub slug: String,
     pub title: String,
+    pub filename: String,
+    pub stem: String,
+    pub path: PathBuf,
+    pub relative_path: String,
     pub snippet: String,
     pub score: f32,
 }
@@ -34,7 +40,10 @@ pub struct DocumentView {
     pub id: i64,
     pub slug: String,
     pub title: String,
+    pub filename: String,
+    pub stem: String,
     pub path: PathBuf,
+    pub relative_path: String,
     pub html: String,
     pub outgoing_links: Vec<String>,
     pub backlinks: Vec<String>,
@@ -51,7 +60,10 @@ pub struct VaultRuntime {
 struct IndexedDocument {
     slug: String,
     title: String,
+    filename: String,
+    stem: String,
     path: PathBuf,
+    relative_path: String,
     body: String,
     links: Vec<WikiLink>,
 }
@@ -67,7 +79,21 @@ struct SearchFields {
     id: Field,
     slug: Field,
     title: Field,
+    filename: Field,
+    relative_path: Field,
     body: Field,
+}
+
+#[derive(Debug, Clone)]
+struct DocumentSummary {
+    id: i64,
+    slug: String,
+    title: String,
+    filename: String,
+    stem: String,
+    path: PathBuf,
+    relative_path: String,
+    body: String,
 }
 
 impl VaultRuntime {
@@ -110,7 +136,16 @@ impl VaultRuntime {
         let (index, fields) = self.open_search_index()?;
         let reader = index.reader().context("open tantivy reader")?;
         let searcher = reader.searcher();
-        let parser = QueryParser::for_index(&index, vec![fields.title, fields.body, fields.slug]);
+        let parser = QueryParser::for_index(
+            &index,
+            vec![
+                fields.title,
+                fields.body,
+                fields.slug,
+                fields.filename,
+                fields.relative_path,
+            ],
+        );
         let query = parser.parse_query(query).context("parse search query")?;
         let top_docs = searcher
             .search(&query, &TopDocs::with_limit(limit))
@@ -123,12 +158,16 @@ impl VaultRuntime {
             let Some(id) = first_u64(&retrieved, fields.id) else {
                 continue;
             };
-            if let Some((slug, title, body)) = document_summary(&conn, id as i64)? {
+            if let Some(summary) = document_summary(&conn, id as i64)? {
                 hits.push(SearchHit {
-                    id: id as i64,
-                    slug,
-                    title,
-                    snippet: snippet_for(&body),
+                    id: summary.id,
+                    slug: summary.slug,
+                    title: summary.title,
+                    filename: summary.filename,
+                    stem: summary.stem,
+                    path: summary.path,
+                    relative_path: summary.relative_path,
+                    snippet: snippet_for(&summary.body),
                     score,
                 });
             }
@@ -140,31 +179,38 @@ impl VaultRuntime {
         let conn = self.open_db()?;
         let doc = conn
             .query_row(
-                "select id, slug, title, path, body from documents where slug = ?1 order by path limit 1",
+                "select id, slug, title, filename, stem, path, relative_path, body from documents where slug = ?1 order by relative_path limit 1",
                 [slug],
-                |row| {
-                    let body: String = row.get(4)?;
-                    Ok(DocumentView {
-                        id: row.get(0)?,
-                        slug: row.get(1)?,
-                        title: row.get(2)?,
-                        path: PathBuf::from(row.get::<_, String>(3)?),
-                        html: render_markdown(&body),
-                        outgoing_links: Vec::new(),
-                        backlinks: Vec::new(),
-                    })
-                },
+                row_to_document_view,
             )
             .optional()?
             .with_context(|| format!("document not found: {slug}"))?;
 
+        self.with_link_context(&conn, doc)
+    }
+
+    pub fn open_by_id(&self, id: i64) -> Result<DocumentView> {
+        let conn = self.open_db()?;
+        let doc = conn
+            .query_row(
+                "select id, slug, title, filename, stem, path, relative_path, body from documents where id = ?1",
+                [id],
+                row_to_document_view,
+            )
+            .optional()?
+            .with_context(|| format!("document not found: {id}"))?;
+
+        self.with_link_context(&conn, doc)
+    }
+
+    fn with_link_context(&self, conn: &Connection, doc: DocumentView) -> Result<DocumentView> {
         let outgoing_links = collect_strings(
-            &conn,
+            conn,
             "select target_slug from links where source_slug = ?1 order by target_slug",
             &doc.slug,
         )?;
         let backlinks = collect_strings(
-            &conn,
+            conn,
             "select source_slug from links where target_slug = ?1 order by source_slug",
             &doc.slug,
         )?;
@@ -193,22 +239,27 @@ impl VaultRuntime {
         create_schema(&conn)?;
         let (index, fields) = create_search_index(&self.index_dir)?;
         let mut writer = index.writer(50_000_000).context("create tantivy writer")?;
-        let tx = conn.transaction().context("start sqlite index transaction")?;
+        let tx = conn
+            .transaction()
+            .context("start sqlite index transaction")?;
 
         {
             let mut insert_document = tx.prepare(
-                "insert into documents (slug, title, path, body) values (?1, ?2, ?3, ?4)",
+                "insert into documents (slug, title, filename, stem, path, relative_path, body) values (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             )?;
             let mut insert_link = tx.prepare(
                 "insert into links (source_slug, target_slug, label) values (?1, ?2, ?3)",
             )?;
 
             for path in discover_markdown_paths(&self.root)? {
-                let document = parse_markdown(&path)?;
+                let document = parse_markdown(&path, &self.root)?;
                 insert_document.execute(params![
                     document.slug,
                     document.title,
+                    document.filename,
+                    document.stem,
                     document.path.to_string_lossy(),
+                    document.relative_path,
                     document.body,
                 ])?;
                 let id = tx.last_insert_rowid();
@@ -219,6 +270,8 @@ impl VaultRuntime {
                     fields.id => id as u64,
                     fields.slug => document.slug,
                     fields.title => document.title,
+                    fields.filename => document.filename,
+                    fields.relative_path => document.relative_path,
                     fields.body => document.body,
                 ))?;
             }
@@ -248,7 +301,10 @@ fn create_schema(conn: &Connection) -> Result<()> {
           id integer primary key autoincrement,
           slug text not null,
           title text not null,
+          filename text not null,
+          stem text not null,
           path text not null,
+          relative_path text not null,
           body text not null
         );
         create table links (
@@ -258,6 +314,7 @@ fn create_schema(conn: &Connection) -> Result<()> {
           label text not null
         );
         create index documents_slug on documents(slug);
+        create index documents_relative_path on documents(relative_path);
         create index links_source on links(source_slug);
         create index links_target on links(target_slug);
         "#,
@@ -269,7 +326,9 @@ fn discover_markdown_paths(root: &Path) -> Result<Vec<PathBuf>> {
     let mut paths = Vec::new();
     for entry in WalkDir::new(root).into_iter().filter_map(Result::ok) {
         let path = entry.path();
-        if !entry.file_type().is_file() || path.extension().and_then(|ext| ext.to_str()) != Some("md") {
+        if !entry.file_type().is_file()
+            || path.extension().and_then(|ext| ext.to_str()) != Some("md")
+        {
             continue;
         }
         paths.push(path.to_path_buf());
@@ -278,9 +337,13 @@ fn discover_markdown_paths(root: &Path) -> Result<Vec<PathBuf>> {
     Ok(paths)
 }
 
-fn parse_markdown(path: &Path) -> Result<IndexedDocument> {
+fn parse_markdown(path: &Path, root: &Path) -> Result<IndexedDocument> {
     let source = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     let (frontmatter, body) = split_frontmatter(&source);
+    let filename = filename_for(path);
+    let stem = stem_for(path);
+    let absolute_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let relative_path = relative_path_for(root, path);
     let title = frontmatter
         .as_ref()
         .and_then(|value| value.get("title"))
@@ -304,10 +367,34 @@ fn parse_markdown(path: &Path) -> Result<IndexedDocument> {
     Ok(IndexedDocument {
         slug,
         title,
-        path: path.to_path_buf(),
+        filename,
+        stem,
+        path: absolute_path,
+        relative_path,
         body,
         links,
     })
+}
+
+fn filename_for(path: &Path) -> String {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("untitled.md")
+        .to_string()
+}
+
+fn stem_for(path: &Path) -> String {
+    path.file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("untitled")
+        .to_string()
+}
+
+fn relative_path_for(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
 }
 
 fn split_frontmatter(source: &str) -> (Option<serde_yaml::Value>, String) {
@@ -413,9 +500,21 @@ fn search_schema() -> (Schema, SearchFields) {
     let id = builder.add_u64_field("id", INDEXED | STORED | FAST);
     let slug = builder.add_text_field("slug", STRING | STORED);
     let title = builder.add_text_field("title", TEXT | STORED);
+    let filename = builder.add_text_field("filename", TEXT | STORED);
+    let relative_path = builder.add_text_field("relative_path", TEXT | STORED);
     let body = builder.add_text_field("body", TEXT | STORED);
     let schema = builder.build();
-    (schema, SearchFields { id, slug, title, body })
+    (
+        schema,
+        SearchFields {
+            id,
+            slug,
+            title,
+            filename,
+            relative_path,
+            body,
+        },
+    )
 }
 
 fn fields_from_schema(schema: &Schema) -> Result<SearchFields> {
@@ -423,6 +522,8 @@ fn fields_from_schema(schema: &Schema) -> Result<SearchFields> {
         id: schema.get_field("id")?,
         slug: schema.get_field("slug")?,
         title: schema.get_field("title")?,
+        filename: schema.get_field("filename")?,
+        relative_path: schema.get_field("relative_path")?,
         body: schema.get_field("body")?,
     })
 }
@@ -436,14 +537,41 @@ fn first_u64(document: &TantivyDocument, field: Field) -> Option<u64> {
         })
 }
 
-fn document_summary(conn: &Connection, id: i64) -> Result<Option<(String, String, String)>> {
+fn document_summary(conn: &Connection, id: i64) -> Result<Option<DocumentSummary>> {
     conn.query_row(
-        "select slug, title, body from documents where id = ?1",
+        "select id, slug, title, filename, stem, path, relative_path, body from documents where id = ?1",
         [id],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        |row| {
+            Ok(DocumentSummary {
+                id: row.get(0)?,
+                slug: row.get(1)?,
+                title: row.get(2)?,
+                filename: row.get(3)?,
+                stem: row.get(4)?,
+                path: PathBuf::from(row.get::<_, String>(5)?),
+                relative_path: row.get(6)?,
+                body: row.get(7)?,
+            })
+        },
     )
     .optional()
     .map_err(Into::into)
+}
+
+fn row_to_document_view(row: &rusqlite::Row<'_>) -> rusqlite::Result<DocumentView> {
+    let body: String = row.get(7)?;
+    Ok(DocumentView {
+        id: row.get(0)?,
+        slug: row.get(1)?,
+        title: row.get(2)?,
+        filename: row.get(3)?,
+        stem: row.get(4)?,
+        path: PathBuf::from(row.get::<_, String>(5)?),
+        relative_path: row.get(6)?,
+        html: render_markdown(&body),
+        outgoing_links: Vec::new(),
+        backlinks: Vec::new(),
+    })
 }
 
 fn collect_strings(conn: &Connection, sql: &str, value: &str) -> Result<Vec<String>> {
@@ -454,7 +582,10 @@ fn collect_strings(conn: &Connection, sql: &str, value: &str) -> Result<Vec<Stri
 }
 
 fn snippet_for(body: &str) -> String {
-    body.split_whitespace().take(24).collect::<Vec<_>>().join(" ")
+    body.split_whitespace()
+        .take(24)
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[cfg(test)]

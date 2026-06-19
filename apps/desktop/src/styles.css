@@ -80,8 +80,21 @@ a:focus-visible {
   letter-spacing: 0;
 }
 
+.document-header h2 {
+  overflow-wrap: anywhere;
+  font-size: 25px;
+}
+
 .brand h1 {
   font-size: 25px;
+}
+
+.document-title {
+  margin: 8px 0 0;
+  color: #9ba7b2;
+  font-size: 14px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .eyebrow,
@@ -212,10 +225,19 @@ a:focus-visible {
   background: #1f252a;
 }
 
+.result em,
 .result span,
 .result small,
 .empty {
   color: #9ba7b2;
+}
+
+.result em {
+  overflow: hidden;
+  font-size: 12px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .result span {
