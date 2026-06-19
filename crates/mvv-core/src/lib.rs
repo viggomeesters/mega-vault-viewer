@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 use anyhow::{Context, Result};
+use base64::{engine::general_purpose, Engine as _};
 use pulldown_cmark::{html, Options, Parser};
 use regex::Regex;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -185,7 +186,7 @@ impl VaultRuntime {
             .query_row(
                 "select id, slug, title, filename, stem, path, relative_path, body, frontmatter_json, frontmatter_error from documents where slug = ?1 order by relative_path limit 1",
                 [slug],
-                row_to_document_view,
+                |row| row_to_document_view(row, &self.root),
             )
             .optional()?
             .with_context(|| format!("document not found: {slug}"))?;
@@ -199,7 +200,7 @@ impl VaultRuntime {
             .query_row(
                 "select id, slug, title, filename, stem, path, relative_path, body, frontmatter_json, frontmatter_error from documents where id = ?1",
                 [id],
-                row_to_document_view,
+                |row| row_to_document_view(row, &self.root),
             )
             .optional()?
             .with_context(|| format!("document not found: {id}"))?;
@@ -476,9 +477,11 @@ fn extract_wikilinks(body: &str) -> Vec<WikiLink> {
         .collect()
 }
 
-fn render_markdown(body: &str) -> String {
-    let re = Regex::new(r"\[\[([^\]|]+)(?:\|([^\]]+))?\]\]").expect("valid wikilink regex");
-    let markdown = re.replace_all(body, |captures: &regex::Captures<'_>| {
+fn render_markdown(body: &str, vault_root: &Path, document_path: &Path) -> String {
+    let markdown = replace_obsidian_image_embeds(body, vault_root, document_path);
+    let markdown = replace_markdown_images(&markdown, vault_root, document_path);
+    let re = Regex::new(r"\[\[([^\]|!]+)(?:\|([^\]]+))?\]\]").expect("valid wikilink regex");
+    let markdown = re.replace_all(&markdown, |captures: &regex::Captures<'_>| {
         let target = captures.get(1).map(|m| m.as_str()).unwrap_or("").trim();
         let label = captures
             .get(2)
@@ -494,6 +497,159 @@ fn render_markdown(body: &str) -> String {
         rendered
     })
     .unwrap_or_else(|_| render_plaintext_fallback(body))
+}
+
+fn replace_obsidian_image_embeds(body: &str, vault_root: &Path, document_path: &Path) -> String {
+    let re = Regex::new(r"!\[\[([^\]|]+)(?:\|([^\]]+))?\]\]").expect("valid embed regex");
+    re.replace_all(body, |captures: &regex::Captures<'_>| {
+        let target = captures.get(1).map(|m| m.as_str()).unwrap_or("").trim();
+        let alt = captures
+            .get(2)
+            .map(|m| m.as_str().trim())
+            .filter(|value| !value.is_empty())
+            .unwrap_or(target);
+        render_media_html(target, alt, vault_root, document_path)
+    })
+    .into_owned()
+}
+
+fn replace_markdown_images(body: &str, vault_root: &Path, document_path: &Path) -> String {
+    let re = Regex::new(r"!\[([^\]]*)\]\(([^)]+)\)").expect("valid markdown image regex");
+    re.replace_all(body, |captures: &regex::Captures<'_>| {
+        let alt = captures.get(1).map(|m| m.as_str()).unwrap_or("").trim();
+        let target = captures.get(2).map(|m| m.as_str()).unwrap_or("").trim();
+        if is_external_media_target(target) {
+            return captures
+                .get(0)
+                .map(|matched| matched.as_str().to_string())
+                .unwrap_or_default();
+        }
+        render_media_html(target, alt, vault_root, document_path)
+    })
+    .into_owned()
+}
+
+fn render_media_html(target: &str, alt: &str, vault_root: &Path, document_path: &Path) -> String {
+    let Some(path) = resolve_media_path(target, vault_root, document_path) else {
+        return format!(
+            r#"<span class="missing-media">Missing media: {}</span>"#,
+            escape_html(target)
+        );
+    };
+    let Some(mime) = mime_for_path(&path) else {
+        return format!(
+            r#"<span class="missing-media">Unsupported media: {}</span>"#,
+            escape_html(target)
+        );
+    };
+    match fs::read(&path) {
+        Ok(bytes) => format!(
+            r#"<img class="vault-image" src="data:{};base64,{}" alt="{}" loading="lazy" />"#,
+            mime,
+            general_purpose::STANDARD.encode(bytes),
+            escape_html(alt)
+        ),
+        Err(_) => format!(
+            r#"<span class="missing-media">Missing media: {}</span>"#,
+            escape_html(target)
+        ),
+    }
+}
+
+fn resolve_media_path(target: &str, vault_root: &Path, document_path: &Path) -> Option<PathBuf> {
+    if is_external_media_target(target) {
+        return None;
+    }
+
+    let cleaned = clean_media_target(target);
+    let target_path = PathBuf::from(&cleaned);
+    let mut candidates = Vec::new();
+    if target_path.is_absolute() {
+        candidates.push(target_path);
+    } else {
+        if let Some(parent) = document_path.parent() {
+            candidates.push(parent.join(&cleaned));
+        }
+        candidates.push(vault_root.join(&cleaned));
+    }
+
+    for candidate in candidates {
+        if let Some(path) = canonical_media_path(&candidate, vault_root) {
+            return Some(path);
+        }
+    }
+
+    let filename = Path::new(&cleaned).file_name()?.to_str()?;
+    find_media_by_filename(vault_root, filename)
+}
+
+fn clean_media_target(target: &str) -> String {
+    target
+        .trim_matches('<')
+        .trim_matches('>')
+        .split('#')
+        .next()
+        .unwrap_or(target)
+        .split('?')
+        .next()
+        .unwrap_or(target)
+        .replace("%20", " ")
+}
+
+fn is_external_media_target(target: &str) -> bool {
+    let lower = target.to_ascii_lowercase();
+    lower.starts_with("http://")
+        || lower.starts_with("https://")
+        || lower.starts_with("data:")
+        || lower.starts_with("file://")
+}
+
+fn canonical_media_path(candidate: &Path, vault_root: &Path) -> Option<PathBuf> {
+    let path = candidate.canonicalize().ok()?;
+    let root = vault_root.canonicalize().ok()?;
+    if path.starts_with(root) && path.is_file() && mime_for_path(&path).is_some() {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+fn find_media_by_filename(vault_root: &Path, filename: &str) -> Option<PathBuf> {
+    for folder in ["30_media", "20_files", "attachments", "assets"] {
+        let root = vault_root.join(folder);
+        if !root.exists() {
+            continue;
+        }
+        for entry in WalkDir::new(root).into_iter().filter_map(Result::ok) {
+            let path = entry.path();
+            if entry.file_type().is_file()
+                && path.file_name().and_then(|name| name.to_str()) == Some(filename)
+            {
+                if let Some(path) = canonical_media_path(path, vault_root) {
+                    return Some(path);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn mime_for_path(path: &Path) -> Option<&'static str> {
+    match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("png") => Some("image/png"),
+        Some("jpg") | Some("jpeg") => Some("image/jpeg"),
+        Some("gif") => Some("image/gif"),
+        Some("webp") => Some("image/webp"),
+        Some("svg") => Some("image/svg+xml"),
+        Some("bmp") => Some("image/bmp"),
+        Some("avif") => Some("image/avif"),
+        _ => None,
+    }
 }
 
 fn catch_unwind_silent<T>(f: impl FnOnce() -> T) -> std::thread::Result<T> {
@@ -588,19 +744,23 @@ fn document_summary(conn: &Connection, id: i64) -> Result<Option<DocumentSummary
     .map_err(Into::into)
 }
 
-fn row_to_document_view(row: &rusqlite::Row<'_>) -> rusqlite::Result<DocumentView> {
+fn row_to_document_view(
+    row: &rusqlite::Row<'_>,
+    vault_root: &Path,
+) -> rusqlite::Result<DocumentView> {
     let body: String = row.get(7)?;
     let frontmatter_json: Option<String> = row.get(8)?;
     let frontmatter = frontmatter_json.and_then(|value| serde_json::from_str(&value).ok());
+    let path = PathBuf::from(row.get::<_, String>(5)?);
     Ok(DocumentView {
         id: row.get(0)?,
         slug: row.get(1)?,
         title: row.get(2)?,
         filename: row.get(3)?,
         stem: row.get(4)?,
-        path: PathBuf::from(row.get::<_, String>(5)?),
+        path: path.clone(),
         relative_path: row.get(6)?,
-        html: render_markdown(&body),
+        html: render_markdown(&body, vault_root, &path),
         frontmatter,
         frontmatter_error: row.get(9)?,
         outgoing_links: Vec::new(),
@@ -624,6 +784,8 @@ fn snippet_for(body: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::{extract_wikilinks, render_markdown, split_frontmatter, WikiLink};
 
     #[test]
@@ -636,7 +798,11 @@ mod tests {
 
     #[test]
     fn renders_wikilinks_as_local_links() {
-        let html = render_markdown("Open [[target-slug|Target]].");
+        let html = render_markdown(
+            "Open [[target-slug|Target]].",
+            Path::new("."),
+            Path::new("note.md"),
+        );
         assert!(html.contains("mvv://open/target-slug"));
         assert!(html.contains(">Target</a>"));
     }

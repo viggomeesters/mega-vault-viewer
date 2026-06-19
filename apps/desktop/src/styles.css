@@ -340,6 +340,30 @@ a:focus-visible {
   color: #7fd4ff;
 }
 
+.document-body img.vault-image {
+  display: block;
+  max-width: min(100%, 760px);
+  height: auto;
+  border: 1px solid #303840;
+  border-radius: 7px;
+  background: #0f1114;
+}
+
+.missing-media {
+  display: inline-flex;
+  max-width: 100%;
+  min-height: 30px;
+  align-items: center;
+  overflow-wrap: anywhere;
+  border: 1px solid #4a3b35;
+  border-radius: 7px;
+  background: #1b1513;
+  color: #ffb4a8;
+  padding: 4px 9px;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
 .document-body code {
   border-radius: 5px;
   background: #20262b;

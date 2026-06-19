@@ -136,3 +136,42 @@ The body still renders.
     assert!(broken.frontmatter_error.unwrap().contains("frontmatter"));
     assert!(broken.html.contains("The body still renders."));
 }
+
+#[test]
+fn renders_local_markdown_and_obsidian_images_safely() {
+    let temp = tempfile::tempdir().unwrap();
+    let vault = temp.path().join("vault");
+    let notes = vault.join("10_notes/2026-06");
+    let media = vault.join("30_media/2026-06");
+    fs::create_dir_all(&notes).unwrap();
+    fs::create_dir_all(&media).unwrap();
+
+    fs::write(media.join("pixel.png"), [0x89, b'P', b'N', b'G']).unwrap();
+    fs::write(notes.join("local.jpg"), [0xff, 0xd8, 0xff, 0xd9]).unwrap();
+
+    fs::write(
+        notes.join("image-note.md"),
+        r#"---
+slug: image-note
+---
+
+# Image Note
+
+![Relative](local.jpg)
+
+![[pixel.png]]
+
+![Missing](missing.png)
+"#,
+    )
+    .unwrap();
+
+    let runtime = VaultRuntime::build(&vault, temp.path().join("state")).unwrap();
+    let image_note = runtime.open_by_slug("image-note").unwrap();
+
+    assert!(image_note.html.contains("src=\"data:image/jpeg;base64,"));
+    assert!(image_note.html.contains("src=\"data:image/png;base64,"));
+    assert!(image_note.html.contains("class=\"missing-media\""));
+    assert!(image_note.html.contains("missing.png"));
+    assert!(!image_note.html.contains("src=\"local.jpg\""));
+}
