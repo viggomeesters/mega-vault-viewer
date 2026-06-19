@@ -35,7 +35,7 @@ pub struct SearchHit {
     pub score: f32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DocumentView {
     pub id: i64,
     pub slug: String,
@@ -45,6 +45,8 @@ pub struct DocumentView {
     pub path: PathBuf,
     pub relative_path: String,
     pub html: String,
+    pub frontmatter: Option<serde_json::Value>,
+    pub frontmatter_error: Option<String>,
     pub outgoing_links: Vec<String>,
     pub backlinks: Vec<String>,
 }
@@ -65,6 +67,8 @@ struct IndexedDocument {
     path: PathBuf,
     relative_path: String,
     body: String,
+    frontmatter: Option<serde_json::Value>,
+    frontmatter_error: Option<String>,
     links: Vec<WikiLink>,
 }
 
@@ -179,7 +183,7 @@ impl VaultRuntime {
         let conn = self.open_db()?;
         let doc = conn
             .query_row(
-                "select id, slug, title, filename, stem, path, relative_path, body from documents where slug = ?1 order by relative_path limit 1",
+                "select id, slug, title, filename, stem, path, relative_path, body, frontmatter_json, frontmatter_error from documents where slug = ?1 order by relative_path limit 1",
                 [slug],
                 row_to_document_view,
             )
@@ -193,7 +197,7 @@ impl VaultRuntime {
         let conn = self.open_db()?;
         let doc = conn
             .query_row(
-                "select id, slug, title, filename, stem, path, relative_path, body from documents where id = ?1",
+                "select id, slug, title, filename, stem, path, relative_path, body, frontmatter_json, frontmatter_error from documents where id = ?1",
                 [id],
                 row_to_document_view,
             )
@@ -245,7 +249,7 @@ impl VaultRuntime {
 
         {
             let mut insert_document = tx.prepare(
-                "insert into documents (slug, title, filename, stem, path, relative_path, body) values (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "insert into documents (slug, title, filename, stem, path, relative_path, body, frontmatter_json, frontmatter_error) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             )?;
             let mut insert_link = tx.prepare(
                 "insert into links (source_slug, target_slug, label) values (?1, ?2, ?3)",
@@ -261,6 +265,11 @@ impl VaultRuntime {
                     document.path.to_string_lossy(),
                     document.relative_path,
                     document.body,
+                    document
+                        .frontmatter
+                        .as_ref()
+                        .map(serde_json::Value::to_string),
+                    document.frontmatter_error,
                 ])?;
                 let id = tx.last_insert_rowid();
                 for link in &document.links {
@@ -305,7 +314,9 @@ fn create_schema(conn: &Connection) -> Result<()> {
           stem text not null,
           path text not null,
           relative_path text not null,
-          body text not null
+          body text not null,
+          frontmatter_json text,
+          frontmatter_error text
         );
         create table links (
           id integer primary key autoincrement,
@@ -339,7 +350,7 @@ fn discover_markdown_paths(root: &Path) -> Result<Vec<PathBuf>> {
 
 fn parse_markdown(path: &Path, root: &Path) -> Result<IndexedDocument> {
     let source = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    let (frontmatter, body) = split_frontmatter(&source);
+    let (frontmatter, frontmatter_error, body) = split_frontmatter(&source);
     let filename = filename_for(path);
     let stem = stem_for(path);
     let absolute_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
@@ -372,6 +383,8 @@ fn parse_markdown(path: &Path, root: &Path) -> Result<IndexedDocument> {
         path: absolute_path,
         relative_path,
         body,
+        frontmatter,
+        frontmatter_error,
         links,
     })
 }
@@ -397,20 +410,37 @@ fn relative_path_for(root: &Path, path: &Path) -> String {
         .replace('\\', "/")
 }
 
-fn split_frontmatter(source: &str) -> (Option<serde_yaml::Value>, String) {
+fn split_frontmatter(source: &str) -> (Option<serde_json::Value>, Option<String>, String) {
     if !source.starts_with("---\n") {
-        return (None, source.to_string());
+        return (None, None, source.to_string());
     }
     let Some(rest) = source.strip_prefix("---\n") else {
-        return (None, source.to_string());
+        return (None, None, source.to_string());
     };
     let Some(end) = rest.find("\n---\n") else {
-        return (None, source.to_string());
+        return (
+            None,
+            Some("frontmatter closing delimiter not found".to_string()),
+            source.to_string(),
+        );
     };
     let yaml = &rest[..end];
     let body = rest[end + "\n---\n".len()..].to_string();
-    let frontmatter = serde_yaml::from_str(yaml).ok();
-    (frontmatter, body)
+    match serde_yaml::from_str::<serde_yaml::Value>(yaml) {
+        Ok(value) => match serde_json::to_value(value) {
+            Ok(value) => (Some(value), None, body),
+            Err(error) => (
+                None,
+                Some(format!("frontmatter conversion failed: {error}")),
+                body,
+            ),
+        },
+        Err(error) => (
+            None,
+            Some(format!("frontmatter parse failed: {error}")),
+            body,
+        ),
+    }
 }
 
 fn first_heading(body: &str) -> Option<String> {
@@ -560,6 +590,8 @@ fn document_summary(conn: &Connection, id: i64) -> Result<Option<DocumentSummary
 
 fn row_to_document_view(row: &rusqlite::Row<'_>) -> rusqlite::Result<DocumentView> {
     let body: String = row.get(7)?;
+    let frontmatter_json: Option<String> = row.get(8)?;
+    let frontmatter = frontmatter_json.and_then(|value| serde_json::from_str(&value).ok());
     Ok(DocumentView {
         id: row.get(0)?,
         slug: row.get(1)?,
@@ -569,6 +601,8 @@ fn row_to_document_view(row: &rusqlite::Row<'_>) -> rusqlite::Result<DocumentVie
         path: PathBuf::from(row.get::<_, String>(5)?),
         relative_path: row.get(6)?,
         html: render_markdown(&body),
+        frontmatter,
+        frontmatter_error: row.get(9)?,
         outgoing_links: Vec::new(),
         backlinks: Vec::new(),
     })
@@ -594,8 +628,9 @@ mod tests {
 
     #[test]
     fn parses_frontmatter_and_body() {
-        let (frontmatter, body) = split_frontmatter("---\ntitle: Test\n---\n# Body\n");
+        let (frontmatter, error, body) = split_frontmatter("---\ntitle: Test\n---\n# Body\n");
         assert_eq!(frontmatter.unwrap()["title"].as_str(), Some("Test"));
+        assert_eq!(error, None);
         assert_eq!(body, "# Body\n");
     }
 

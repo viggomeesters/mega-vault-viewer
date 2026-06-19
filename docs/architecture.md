@@ -23,6 +23,13 @@ Future adapters can support PDF, Office, CSV/XLSX, JSON, HTML, images and transc
 
 Schema validation belongs in the structured runtime. Life OS frontmatter rules can be loaded as contracts, evaluated per document and shown as non-blocking quality states. Repair should remain explicit and transactional.
 
+Frontmatter is indexed as structured metadata instead of display text. The current UI keeps it collapsed by default, but the same model can later support:
+
+- Filters by type, category, project, entity, topic, source and date fields.
+- Validation warnings for missing or malformed Life OS fields.
+- Schema quality gates before agent edits or imports are accepted.
+- Agent evidence views that show which source fields justified a search result, summary or patch.
+
 ## Scale Path
 
 The MVP does full rebuilds for clarity. The path to 1m/10m notes is:

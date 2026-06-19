@@ -16,6 +16,7 @@ title: Alpha Note
 slug: 20260617-0900-alpha
 type: reference
 category: tool
+topics: [viewer, graph]
 ---
 
 # Alpha Note
@@ -64,6 +65,13 @@ Backlinked content for the local viewer.
     assert_eq!(beta.relative_path, "10_notes/2026-06/20260617-0915-beta.md");
     assert_eq!(beta.backlinks, vec!["20260617-0900-alpha"]);
     assert!(beta.html.contains("Beta Note"));
+
+    let alpha = runtime.open_by_slug("20260617-0900-alpha").unwrap();
+    let frontmatter = alpha.frontmatter.unwrap();
+    assert_eq!(frontmatter["type"].as_str(), Some("reference"));
+    assert_eq!(frontmatter["category"].as_str(), Some("tool"));
+    assert_eq!(frontmatter["topics"][0].as_str(), Some("viewer"));
+    assert_eq!(alpha.frontmatter_error, None);
 }
 
 #[test]
@@ -100,4 +108,31 @@ Same slug in two source paths.
     let opened = runtime.open_by_id(hits[0].id).unwrap();
     assert_eq!(opened.slug, "duplicate-note");
     assert_eq!(opened.relative_path, hits[0].relative_path);
+}
+
+#[test]
+fn malformed_frontmatter_is_reported_without_breaking_rendering() {
+    let temp = tempfile::tempdir().unwrap();
+    let vault = temp.path().join("vault");
+    fs::create_dir_all(&vault).unwrap();
+
+    fs::write(
+        vault.join("broken.md"),
+        r#"---
+title: [broken
+---
+
+# Broken
+
+The body still renders.
+"#,
+    )
+    .unwrap();
+
+    let runtime = VaultRuntime::build(&vault, temp.path().join("state")).unwrap();
+    let broken = runtime.open_by_slug("broken").unwrap();
+
+    assert_eq!(broken.frontmatter, None);
+    assert!(broken.frontmatter_error.unwrap().contains("frontmatter"));
+    assert!(broken.html.contains("The body still renders."));
 }

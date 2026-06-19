@@ -6,6 +6,8 @@ type VaultStats = {
   links: number;
 };
 
+type FrontmatterValue = null | string | number | boolean | FrontmatterValue[] | { [key: string]: FrontmatterValue };
+
 type SearchHit = {
   id: number;
   slug: string;
@@ -27,6 +29,8 @@ type DocumentView = {
   path: string;
   relative_path: string;
   html: string;
+  frontmatter: Record<string, FrontmatterValue> | null;
+  frontmatter_error: string | null;
   outgoing_links: string[];
   backlinks: string[];
 };
@@ -90,6 +94,8 @@ function render() {
           <code title="${escapeAttribute(currentDocument?.path ?? "mvv://local")}">${escapeHtml(currentDocument?.relative_path ?? "mvv://local")}</code>
         </header>
 
+        ${currentDocument ? renderMetadataPanel(currentDocument) : ""}
+
         <article class="document-body">
           ${
             currentDocument
@@ -113,6 +119,72 @@ function render() {
   `;
 
   bindEvents();
+}
+
+function renderMetadataPanel(document: DocumentView) {
+  return `
+    <details class="metadata-panel">
+      <summary>
+        <span>Frontmatter</span>
+        <small>${escapeHtml(metadataSummary(document))}</small>
+      </summary>
+      <dl>
+        ${renderMetadataRows(document)}
+      </dl>
+    </details>
+  `;
+}
+
+function metadataSummary(document: DocumentView) {
+  if (document.frontmatter_error) {
+    return "parse issue";
+  }
+  if (!document.frontmatter || Object.keys(document.frontmatter).length === 0) {
+    return "none";
+  }
+
+  return `${Object.keys(document.frontmatter).length} fields`;
+}
+
+function renderMetadataRows(document: DocumentView) {
+  if (document.frontmatter_error) {
+    return renderMetadataRow("error", document.frontmatter_error);
+  }
+  if (!document.frontmatter || Object.keys(document.frontmatter).length === 0) {
+    return renderMetadataRow("status", "No frontmatter");
+  }
+
+  const priority = ["type", "category", "created", "timestamp", "slug", "source", "topics", "project", "entity", "aliases"];
+  const keys = Object.keys(document.frontmatter);
+  const orderedKeys = [
+    ...priority.filter((key) => keys.includes(key)),
+    ...keys.filter((key) => !priority.includes(key)).sort((a, b) => a.localeCompare(b)),
+  ];
+
+  return orderedKeys.map((key) => renderMetadataRow(key, document.frontmatter?.[key] ?? null)).join("");
+}
+
+function renderMetadataRow(key: string, value: FrontmatterValue) {
+  return `
+    <div>
+      <dt>${escapeHtml(key)}</dt>
+      <dd>${escapeHtml(formatFrontmatterValue(value))}</dd>
+    </div>
+  `;
+}
+
+function formatFrontmatterValue(value: FrontmatterValue): string {
+  if (value === null) {
+    return "";
+  }
+  if (Array.isArray(value)) {
+    return value.map(formatFrontmatterValue).filter(Boolean).join(", ");
+  }
+  if (typeof value === "object") {
+    return JSON.stringify(value);
+  }
+
+  return String(value);
 }
 
 function renderSearchHit(hit: SearchHit) {
