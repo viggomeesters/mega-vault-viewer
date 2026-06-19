@@ -51,10 +51,18 @@ type FolderEntry = {
   files: FileBrowserItem[];
 };
 
+type DailyNoteEntry = {
+  date: string;
+  id: number;
+  filename: string;
+  relative_path: string;
+};
+
 type FileBrowserSnapshot = {
   folders: FolderEntry[];
   newest_files: FileBrowserItem[];
   recent_files: FileBrowserItem[];
+  daily_notes: DailyNoteEntry[];
 };
 
 type IndexSnapshot = {
@@ -68,6 +76,11 @@ type RefreshSnapshot = {
 
 type AppMode = "setup" | "indexing" | "ready" | "error";
 type FileViewMode = "folders" | "newest" | "recent";
+type CalendarDay = {
+  date: Date;
+  key: string;
+  inMonth: boolean;
+};
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
@@ -82,6 +95,7 @@ let currentStats: VaultStats | null = null;
 let searchResults: SearchHit[] = [];
 let fileBrowserSnapshot: FileBrowserSnapshot | null = null;
 let fileViewMode: FileViewMode = "folders";
+let calendarMonth = startOfMonth(new Date());
 let statusText = "Ready";
 let vaultPath = "";
 let appMode: AppMode = "setup";
@@ -110,6 +124,7 @@ function render() {
         </div>
 
         ${renderVaultSetup()}
+        ${renderDailyCalendar()}
 
         <label class="field">
           <span>Search</span>
@@ -254,6 +269,46 @@ function renderSearchHit(hit: SearchHit) {
   `;
 }
 
+function renderDailyCalendar() {
+  const dailyNotes = dailyNotesByDate();
+  const days = calendarDays(calendarMonth);
+  return `
+    <section class="daily-calendar" aria-label="Daily notes calendar">
+      <div class="calendar-toolbar">
+        <button class="calendar-icon-button" type="button" data-calendar-action="previous" title="Previous month" aria-label="Previous month">&lt;</button>
+        <strong>${escapeHtml(formatMonth(calendarMonth))}</strong>
+        <button class="calendar-text-button" type="button" data-calendar-action="today">Today</button>
+        <button class="calendar-icon-button" type="button" data-calendar-action="next" title="Next month" aria-label="Next month">&gt;</button>
+      </div>
+      <div class="calendar-weekdays" aria-hidden="true">
+        ${["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((day) => `<span>${day}</span>`).join("")}
+      </div>
+      <div class="calendar-grid">
+        ${days.map((day) => renderCalendarDay(day, dailyNotes.get(day.key))).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderCalendarDay(day: CalendarDay, dailyNote: DailyNoteEntry | undefined) {
+  const classes = [
+    "calendar-day",
+    day.inMonth ? "" : "is-outside",
+    isToday(day.date) ? "is-today" : "",
+    isCurrentDocumentDailyNote(dailyNote) ? "is-selected" : "",
+    dailyNote ? "has-note" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  return `
+    <button class="${classes}" type="button" data-calendar-date="${day.key}" ${dailyNote ? `data-doc-id="${dailyNote.id}"` : ""}>
+      <span>${day.date.getDate()}</span>
+      ${dailyNote ? `<i aria-hidden="true"></i>` : ""}
+    </button>
+  `;
+}
+
 function renderSidebarExplorer() {
   const hasSearch = currentSearchQuery.trim().length > 0;
   return `
@@ -384,6 +439,32 @@ function bindEvents() {
   document.querySelector<HTMLInputElement>("#search-box")?.addEventListener("input", (event) => {
     currentSearchQuery = (event.target as HTMLInputElement).value;
   });
+  document.querySelectorAll<HTMLButtonElement>("[data-calendar-action]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const action = button.dataset.calendarAction;
+      if (action === "previous") {
+        calendarMonth = addMonths(calendarMonth, -1);
+      }
+      if (action === "next") {
+        calendarMonth = addMonths(calendarMonth, 1);
+      }
+      if (action === "today") {
+        calendarMonth = startOfMonth(new Date());
+      }
+      render();
+    });
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-calendar-date]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const id = Number(button.dataset.docId);
+      if (Number.isFinite(id)) {
+        void openDocumentById(id);
+        return;
+      }
+      statusText = `No daily note for ${button.dataset.calendarDate}`;
+      render();
+    });
+  });
   document.querySelectorAll<HTMLButtonElement>("[data-file-view]").forEach((button) => {
     button.addEventListener("click", () => {
       const mode = button.dataset.fileView;
@@ -403,6 +484,9 @@ function bindEvents() {
   });
   document.querySelectorAll<HTMLButtonElement>("[data-doc-id]").forEach((button) => {
     button.addEventListener("click", () => {
+      if (button.dataset.calendarDate) {
+        return;
+      }
       const id = Number(button.dataset.docId);
       if (Number.isFinite(id)) {
         void openDocumentById(id);
@@ -615,6 +699,62 @@ function formatRefreshTime(date: Date) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function dailyNotesByDate() {
+  const notes = new Map<string, DailyNoteEntry>();
+  for (const note of fileBrowserSnapshot?.daily_notes ?? []) {
+    notes.set(note.date, note);
+  }
+  return notes;
+}
+
+function calendarDays(month: Date): CalendarDay[] {
+  const first = startOfMonth(month);
+  const offset = (first.getDay() + 6) % 7;
+  const start = new Date(first);
+  start.setDate(first.getDate() - offset);
+
+  return Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + index);
+    return {
+      date,
+      key: dateKey(date),
+      inMonth: date.getMonth() === first.getMonth(),
+    };
+  });
+}
+
+function startOfMonth(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+function addMonths(date: Date, amount: number) {
+  return new Date(date.getFullYear(), date.getMonth() + amount, 1);
+}
+
+function dateKey(date: Date) {
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+}
+
+function pad2(value: number) {
+  return String(value).padStart(2, "0");
+}
+
+function formatMonth(date: Date) {
+  return date.toLocaleDateString([], {
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function isToday(date: Date) {
+  return dateKey(date) === dateKey(new Date());
+}
+
+function isCurrentDocumentDailyNote(note: DailyNoteEntry | undefined) {
+  return Boolean(note && currentDocument?.relative_path === note.relative_path);
 }
 
 void loadDefaultPath();

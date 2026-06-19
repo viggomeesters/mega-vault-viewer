@@ -72,10 +72,19 @@ pub struct FolderEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DailyNoteEntry {
+    pub date: String,
+    pub id: i64,
+    pub filename: String,
+    pub relative_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FileBrowserSnapshot {
     pub folders: Vec<FolderEntry>,
     pub newest_files: Vec<FileBrowserItem>,
     pub recent_files: Vec<FileBrowserItem>,
+    pub daily_notes: Vec<DailyNoteEntry>,
 }
 
 #[derive(Debug, Clone)]
@@ -309,6 +318,7 @@ impl VaultRuntime {
         }
 
         let folders = folder_entries(&files);
+        let daily_notes = daily_note_entries(&files);
         let mut newest_files = files.clone();
         newest_files.sort_by_key(|file| std::cmp::Reverse(file.created_at.unwrap_or(0)));
         newest_files.truncate(40);
@@ -321,6 +331,7 @@ impl VaultRuntime {
             folders,
             newest_files,
             recent_files,
+            daily_notes,
         })
     }
 
@@ -919,6 +930,35 @@ fn folder_entries(files: &[FileBrowserItem]) -> Vec<FolderEntry> {
     folders.sort_by(|a, b| a.path.cmp(&b.path));
     folders.truncate(80);
     folders
+}
+
+fn daily_note_entries(files: &[FileBrowserItem]) -> Vec<DailyNoteEntry> {
+    let mut entries = files
+        .iter()
+        .filter_map(|file| {
+            let date = daily_note_date(&file.filename, &file.relative_path)?;
+            Some(DailyNoteEntry {
+                date,
+                id: file.id,
+                filename: file.filename.clone(),
+                relative_path: file.relative_path.clone(),
+            })
+        })
+        .collect::<Vec<_>>();
+    entries.sort_by(|a, b| a.date.cmp(&b.date));
+    entries
+}
+
+fn daily_note_date(filename: &str, relative_path: &str) -> Option<String> {
+    if !filename.ends_with("-daily.md") || !relative_path.starts_with("10_notes/") {
+        return None;
+    }
+    let date = filename.get(0..8)?;
+    if !date.chars().all(|character| character.is_ascii_digit()) {
+        return None;
+    }
+
+    Some(format!("{}-{}-{}", &date[0..4], &date[4..6], &date[6..8]))
 }
 
 fn system_time_seconds(time: std::time::SystemTime) -> Option<u64> {

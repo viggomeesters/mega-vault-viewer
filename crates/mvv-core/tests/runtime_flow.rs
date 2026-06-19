@@ -41,11 +41,22 @@ Backlinked content for the local viewer.
 "#,
     )
     .unwrap();
+    fs::write(
+        notes.join("20260619-0600-daily.md"),
+        r#"---
+title: Daily
+slug: 20260619-0600-daily
+---
+
+# Daily
+"#,
+    )
+    .unwrap();
 
     let runtime = VaultRuntime::build(&vault, temp.path().join("state")).unwrap();
 
     let stats = runtime.stats().unwrap();
-    assert_eq!(stats.documents, 2);
+    assert_eq!(stats.documents, 3);
     assert_eq!(stats.links, 1);
 
     let hits = runtime.search("graphite runtime", 5).unwrap();
@@ -82,7 +93,7 @@ Backlinked content for the local viewer.
     assert!(browser
         .folders
         .iter()
-        .any(|folder| folder.path == "10_notes/2026-06" && folder.document_count == 2));
+        .any(|folder| folder.path == "10_notes/2026-06" && folder.document_count == 3));
     assert!(browser
         .newest_files
         .iter()
@@ -91,6 +102,10 @@ Backlinked content for the local viewer.
         .recent_files
         .iter()
         .any(|file| file.relative_path == "10_notes/2026-06/20260617-0900-alpha.md"));
+    assert!(browser.daily_notes.iter().any(|daily| {
+        daily.date == "2026-06-19"
+            && daily.relative_path == "10_notes/2026-06/20260619-0600-daily.md"
+    }));
 }
 
 #[test]
