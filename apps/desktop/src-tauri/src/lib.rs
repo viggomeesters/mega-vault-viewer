@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use mvv_core::{DocumentView, FileBrowserSnapshot, SearchHit, VaultRuntime, VaultStats};
+use mvv_core::{
+    DocumentView, FileBrowserSnapshot, IndexSummary, SearchHit, VaultRuntime, VaultStats,
+};
 use serde::Serialize;
 use tauri::{Manager, State};
 
@@ -18,11 +20,13 @@ struct AppState {
 struct IndexSnapshot {
     stats: VaultStats,
     first_document: Option<DocumentView>,
+    index_summary: IndexSummary,
 }
 
 #[derive(Debug, Serialize)]
 struct RefreshSnapshot {
     stats: VaultStats,
+    index_summary: IndexSummary,
 }
 
 #[derive(Debug, Serialize)]
@@ -47,19 +51,21 @@ async fn index_vault(
         let runtime = VaultRuntime::build(&vault_path, state_dir)?;
         let stats = runtime.stats()?;
         let first_document = runtime.first_document()?;
+        let index_summary = runtime.index_summary();
 
-        Ok::<_, anyhow::Error>((runtime, stats, first_document))
+        Ok::<_, anyhow::Error>((runtime, stats, first_document, index_summary))
     })
     .await
     .map_err(|error| error.to_string())?
     .map_err(|error| error.to_string())?;
 
-    let (runtime, stats, first_document) = snapshot;
+    let (runtime, stats, first_document, index_summary) = snapshot;
 
     *state.runtime.lock().map_err(|_| "runtime lock poisoned")? = Some(runtime);
     Ok(IndexSnapshot {
         stats,
         first_document,
+        index_summary,
     })
 }
 
@@ -73,17 +79,21 @@ async fn refresh_index(
     let snapshot = tauri::async_runtime::spawn_blocking(move || {
         let runtime = VaultRuntime::build(&vault_path, state_dir)?;
         let stats = runtime.stats()?;
+        let index_summary = runtime.index_summary();
 
-        Ok::<_, anyhow::Error>((runtime, stats))
+        Ok::<_, anyhow::Error>((runtime, stats, index_summary))
     })
     .await
     .map_err(|error| error.to_string())?
     .map_err(|error| error.to_string())?;
 
-    let (runtime, stats) = snapshot;
+    let (runtime, stats, index_summary) = snapshot;
 
     *state.runtime.lock().map_err(|_| "runtime lock poisoned")? = Some(runtime);
-    Ok(RefreshSnapshot { stats })
+    Ok(RefreshSnapshot {
+        stats,
+        index_summary,
+    })
 }
 
 #[tauri::command]

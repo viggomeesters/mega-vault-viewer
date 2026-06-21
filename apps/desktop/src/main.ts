@@ -6,6 +6,15 @@ type VaultStats = {
   links: number;
 };
 
+type IndexSummary = {
+  scanned: number;
+  skipped: number;
+  updated: number;
+  deleted: number;
+  renamed: number;
+  errored: number;
+};
+
 type FrontmatterValue = null | string | number | boolean | FrontmatterValue[] | { [key: string]: FrontmatterValue };
 
 type SearchHit = {
@@ -68,10 +77,12 @@ type FileBrowserSnapshot = {
 type IndexSnapshot = {
   stats: VaultStats;
   first_document: DocumentView | null;
+  index_summary: IndexSummary;
 };
 
 type RefreshSnapshot = {
   stats: VaultStats;
+  index_summary: IndexSummary;
 };
 
 type SaveSnapshot = {
@@ -573,7 +584,7 @@ async function indexVault() {
     resetEditState();
     backStack = [];
     forwardStack = [];
-    statusText = `Synced ${snapshot.stats.documents} documents`;
+    statusText = `Synced ${snapshot.stats.documents} documents · ${formatIndexSummary(snapshot.index_summary)}`;
     searchResults = [];
     currentSearchQuery = "";
     lastRefreshAt = new Date();
@@ -617,7 +628,7 @@ async function refreshIndexInBackground(reason: "timer" | "focus" = "timer") {
     backStack = [];
     forwardStack = [];
 
-    statusText = `Updated ${formatRefreshTime(lastRefreshAt)}`;
+    statusText = `Updated ${formatRefreshTime(lastRefreshAt)} · ${formatIndexSummary(snapshot.index_summary)}`;
   } catch (error) {
     statusText = `Background update failed: ${String(error)}`;
   } finally {
@@ -814,6 +825,20 @@ function formatVaultSummary() {
   }
 
   return stats;
+}
+
+function formatIndexSummary(summary: IndexSummary) {
+  const parts = [`${summary.updated} updated`, `${summary.skipped} skipped`];
+  if (summary.deleted > 0) {
+    parts.push(`${summary.deleted} deleted`);
+  }
+  if (summary.renamed > 0) {
+    parts.push(`${summary.renamed} renamed`);
+  }
+  if (summary.errored > 0) {
+    parts.push(`${summary.errored} errors`);
+  }
+  return `${summary.scanned} scanned, ${parts.join(", ")}`;
 }
 
 function formatRefreshTime(date: Date) {

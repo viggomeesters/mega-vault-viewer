@@ -54,6 +54,8 @@ slug: 20260619-0600-daily
     .unwrap();
 
     let runtime = VaultRuntime::build(&vault, temp.path().join("state")).unwrap();
+    assert_eq!(runtime.index_summary().scanned, 3);
+    assert_eq!(runtime.index_summary().updated, 3);
 
     let stats = runtime.stats().unwrap();
     assert_eq!(stats.documents, 3);
@@ -106,6 +108,56 @@ slug: 20260619-0600-daily
         daily.date == "2026-06-19"
             && daily.relative_path == "10_notes/2026-06/20260619-0600-daily.md"
     }));
+}
+
+#[test]
+fn manifest_records_file_kind_extension_size_mtime_and_hash() {
+    let temp = tempfile::tempdir().unwrap();
+    let vault = temp.path().join("vault");
+    fs::create_dir_all(vault.join("media")).unwrap();
+    fs::write(
+        vault.join("alpha.md"),
+        r#"---
+title: Alpha
+slug: alpha
+---
+
+# Alpha
+"#,
+    )
+    .unwrap();
+    fs::write(vault.join("settings.yaml"), "theme: quiet\n").unwrap();
+    fs::write(vault.join("media/photo.png"), b"not really a png").unwrap();
+
+    let runtime = VaultRuntime::build(&vault, temp.path().join("state")).unwrap();
+    let manifest = runtime.file_manifest().unwrap();
+
+    assert_eq!(manifest.len(), 3);
+    let markdown = manifest
+        .iter()
+        .find(|entry| entry.relative_path == "alpha.md")
+        .unwrap();
+    assert_eq!(markdown.kind, "markdown");
+    assert_eq!(markdown.extension, "md");
+    assert!(markdown.size_bytes > 0);
+    assert!(markdown.modified_ns.is_some());
+    assert_eq!(markdown.content_hash.len(), 64);
+    assert_eq!(markdown.status, "indexed");
+
+    let yaml = manifest
+        .iter()
+        .find(|entry| entry.relative_path == "settings.yaml")
+        .unwrap();
+    assert_eq!(yaml.kind, "yaml");
+    assert_eq!(yaml.extension, "yaml");
+
+    let image = manifest
+        .iter()
+        .find(|entry| entry.relative_path == "media/photo.png")
+        .unwrap();
+    assert_eq!(image.kind, "image");
+    assert_eq!(image.extension, "png");
+    assert_eq!(runtime.stats().unwrap().documents, 1);
 }
 
 #[test]
@@ -178,6 +230,8 @@ Existing searchable body.
     let state = temp.path().join("state");
     let runtime = VaultRuntime::build(&vault, &state).unwrap();
     let zeta = runtime.open_by_slug("zeta").unwrap();
+    assert_eq!(runtime.index_summary().updated, 1);
+    assert_eq!(runtime.index_summary().skipped, 0);
     assert_eq!(runtime.stats().unwrap().documents, 1);
 
     fs::write(
@@ -196,6 +250,9 @@ New searchable body.
 
     let runtime = VaultRuntime::build(&vault, &state).unwrap();
     let zeta_after_reindex = runtime.open_by_slug("zeta").unwrap();
+    assert_eq!(runtime.index_summary().scanned, 2);
+    assert_eq!(runtime.index_summary().updated, 1);
+    assert_eq!(runtime.index_summary().skipped, 1);
     assert_eq!(zeta_after_reindex.id, zeta.id);
     assert_eq!(runtime.stats().unwrap().documents, 2);
 
@@ -228,6 +285,7 @@ BeforeOnly
     let state = temp.path().join("state");
     let runtime = VaultRuntime::build(&vault, &state).unwrap();
     let alpha = runtime.open_by_slug("alpha").unwrap();
+    assert_eq!(runtime.index_summary().updated, 1);
     assert_eq!(runtime.search("BeforeOnly", 5).unwrap().len(), 1);
 
     fs::write(
@@ -245,15 +303,65 @@ AfterOnly
     .unwrap();
 
     let runtime = VaultRuntime::build(&vault, &state).unwrap();
+    assert_eq!(runtime.index_summary().updated, 1);
+    assert_eq!(runtime.index_summary().skipped, 0);
     assert_eq!(runtime.open_by_slug("alpha").unwrap().id, alpha.id);
     assert_eq!(runtime.search("BeforeOnly", 5).unwrap().len(), 0);
     assert_eq!(runtime.search("AfterOnly", 5).unwrap().len(), 1);
 
     fs::remove_file(&note).unwrap();
     let runtime = VaultRuntime::build(&vault, &state).unwrap();
+    assert_eq!(runtime.index_summary().scanned, 0);
+    assert_eq!(runtime.index_summary().deleted, 1);
     assert_eq!(runtime.stats().unwrap().documents, 0);
     assert_eq!(runtime.search("AfterOnly", 5).unwrap().len(), 0);
     assert!(runtime.open_by_slug("alpha").is_err());
+}
+
+#[test]
+fn incremental_reindex_reports_renamed_files() {
+    let temp = tempfile::tempdir().unwrap();
+    let vault = temp.path().join("vault");
+    fs::create_dir_all(&vault).unwrap();
+    let original = vault.join("alpha.md");
+    let renamed = vault.join("renamed-alpha.md");
+
+    fs::write(
+        &original,
+        r#"---
+title: Alpha
+slug: alpha
+---
+
+# Alpha
+
+RenameBody
+"#,
+    )
+    .unwrap();
+
+    let state = temp.path().join("state");
+    let runtime = VaultRuntime::build(&vault, &state).unwrap();
+    assert_eq!(runtime.index_summary().updated, 1);
+    fs::rename(&original, &renamed).unwrap();
+
+    let runtime = VaultRuntime::build(&vault, &state).unwrap();
+    assert_eq!(runtime.index_summary().scanned, 1);
+    assert_eq!(runtime.index_summary().updated, 1);
+    assert_eq!(runtime.index_summary().deleted, 1);
+    assert_eq!(runtime.index_summary().renamed, 1);
+    assert_eq!(
+        runtime.open_by_slug("alpha").unwrap().relative_path,
+        "renamed-alpha.md"
+    );
+
+    let manifest = runtime.file_manifest().unwrap();
+    assert!(manifest
+        .iter()
+        .any(|entry| entry.relative_path == "alpha.md" && entry.status == "deleted"));
+    assert!(manifest
+        .iter()
+        .any(|entry| entry.relative_path == "renamed-alpha.md" && entry.status == "indexed"));
 }
 
 #[test]

@@ -27,6 +27,27 @@ pub struct VaultStats {
     pub links: usize,
 }
 
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct IndexSummary {
+    pub scanned: usize,
+    pub skipped: usize,
+    pub updated: usize,
+    pub deleted: usize,
+    pub renamed: usize,
+    pub errored: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FileManifestEntry {
+    pub relative_path: String,
+    pub kind: String,
+    pub extension: String,
+    pub size_bytes: i64,
+    pub modified_ns: Option<i64>,
+    pub content_hash: String,
+    pub status: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SearchHit {
     pub id: i64,
@@ -95,6 +116,7 @@ pub struct VaultRuntime {
     root: PathBuf,
     db_path: PathBuf,
     index_dir: PathBuf,
+    last_summary: IndexSummary,
 }
 
 #[derive(Debug, Clone)]
@@ -146,6 +168,8 @@ struct FileIndexState {
     search_hash: Option<String>,
     parser_version: String,
     status: String,
+    kind: String,
+    extension: String,
 }
 
 #[derive(Debug, Clone)]
@@ -158,6 +182,17 @@ struct SearchDocumentRow {
     body: String,
 }
 
+#[derive(Debug, Clone)]
+struct DiscoveredFile {
+    path: PathBuf,
+    relative_path: String,
+    kind: String,
+    extension: String,
+    size_bytes: i64,
+    modified_ns: Option<i64>,
+    content_hash: String,
+}
+
 impl VaultRuntime {
     pub fn build(root: impl AsRef<Path>, state_dir: impl AsRef<Path>) -> Result<Self> {
         let root = root.as_ref().to_path_buf();
@@ -168,12 +203,13 @@ impl VaultRuntime {
         let index_dir = state_dir.join("tantivy");
         fs::create_dir_all(&index_dir).context("create tantivy index directory")?;
 
-        let runtime = Self {
+        let mut runtime = Self {
             root,
             db_path,
             index_dir,
+            last_summary: IndexSummary::default(),
         };
-        runtime.sync()?;
+        runtime.last_summary = runtime.sync()?;
         Ok(runtime)
     }
 
@@ -186,6 +222,30 @@ impl VaultRuntime {
         let documents = conn.query_row("select count(*) from documents", [], |row| row.get(0))?;
         let links = conn.query_row("select count(*) from links", [], |row| row.get(0))?;
         Ok(VaultStats { documents, links })
+    }
+
+    pub fn index_summary(&self) -> IndexSummary {
+        self.last_summary.clone()
+    }
+
+    pub fn file_manifest(&self) -> Result<Vec<FileManifestEntry>> {
+        let conn = self.open_db()?;
+        let mut statement = conn.prepare(
+            "select relative_path, kind, extension, size_bytes, modified_ns, content_hash, status from files order by relative_path",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok(FileManifestEntry {
+                relative_path: row.get(0)?,
+                kind: row.get(1)?,
+                extension: row.get(2)?,
+                size_bytes: row.get(3)?,
+                modified_ns: row.get(4)?,
+                content_hash: row.get(5)?,
+                status: row.get(6)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
     }
 
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>> {
@@ -405,16 +465,20 @@ impl VaultRuntime {
         Ok(path)
     }
 
-    fn sync(&self) -> Result<()> {
+    fn sync(&self) -> Result<IndexSummary> {
         let mut conn = self.open_db()?;
         create_schema(&conn)?;
         let (index, fields, search_recreated) = open_or_create_search_index(&self.index_dir)?;
         let mut writer = index.writer(50_000_000).context("create tantivy writer")?;
-        let discovered_paths = discover_markdown_paths(&self.root)?;
-        let discovered_relative_paths = discovered_paths
+        let discovered_files = discover_vault_files(&self.root)?;
+        let discovered_relative_paths = discovered_files
             .iter()
-            .map(|path| relative_path_for(&self.root, path))
+            .map(|file| file.relative_path.clone())
             .collect::<std::collections::BTreeSet<_>>();
+        let mut summary = IndexSummary {
+            scanned: discovered_files.len(),
+            ..IndexSummary::default()
+        };
         let mut search_synced = Vec::new();
         let mut search_deleted = Vec::new();
 
@@ -423,22 +487,18 @@ impl VaultRuntime {
             .context("start sqlite index transaction")?;
 
         {
-            for path in discovered_paths {
-                let relative_path = relative_path_for(&self.root, &path);
-                let source = fs::read_to_string(&path)
-                    .with_context(|| format!("read {}", path.display()))?;
-                let content_hash = content_hash(&source);
-                let metadata = fs::metadata(&path)
-                    .with_context(|| format!("read metadata {}", path.display()))?;
-                let size_bytes = metadata.len() as i64;
-                let modified_ns = metadata.modified().ok().and_then(system_time_nanos);
-                let file_state = file_index_state(&tx, &relative_path)?;
+            let stale_hashes = stale_indexed_hashes(&tx, &discovered_relative_paths)?;
+
+            for file in discovered_files {
+                let file_state = file_index_state(&tx, &file.relative_path)?;
                 let needs_document_update = file_state
                     .as_ref()
                     .map(|state| {
                         state.status != "indexed"
-                            || state.content_hash != content_hash
+                            || state.content_hash != file.content_hash
                             || state.parser_version != PARSER_VERSION
+                            || state.kind != file.kind
+                            || state.extension != file.extension
                     })
                     .unwrap_or(true);
                 let needs_search_update = search_recreated
@@ -446,76 +506,89 @@ impl VaultRuntime {
                     || file_state
                         .as_ref()
                         .and_then(|state| state.search_hash.as_deref())
-                        != Some(content_hash.as_str());
+                        != Some(file.content_hash.as_str());
 
-                if needs_document_update {
-                    let document = parse_markdown_source(&path, &self.root, &source)?;
-                    let id = upsert_document(&tx, &document)?;
-                    upsert_file_state(
-                        &tx,
-                        &document,
-                        size_bytes,
-                        modified_ns,
-                        &content_hash,
-                        file_state.and_then(|state| state.search_hash),
-                    )?;
+                if !needs_document_update && !needs_search_update {
+                    summary.skipped += 1;
+                    continue;
+                }
+
+                if file_state.is_none() && stale_hashes.contains(&file.content_hash) {
+                    summary.renamed += 1;
+                }
+
+                if file.kind == "markdown" {
+                    if needs_document_update {
+                        let source = fs::read_to_string(&file.path)
+                            .with_context(|| format!("read {}", file.path.display()))?;
+                        let document = parse_markdown_source(&file.path, &self.root, &source)?;
+                        let id = upsert_document(&tx, &document)?;
+                        upsert_file_state(
+                            &tx,
+                            &file,
+                            file_state
+                                .as_ref()
+                                .and_then(|state| state.search_hash.clone()),
+                        )?;
+
+                        if needs_search_update {
+                            replace_search_document(&mut writer, &fields, id, &document)?;
+                        }
+                    } else if needs_search_update {
+                        if let Some(document) =
+                            document_for_search_by_relative_path(&tx, &file.relative_path)?
+                        {
+                            replace_search_row(&mut writer, &fields, &document)?;
+                        }
+                    }
 
                     if needs_search_update {
-                        replace_search_document(&mut writer, &fields, id, &document)?;
+                        search_synced.push((file.relative_path.clone(), file.content_hash.clone()));
                     }
-                } else if needs_search_update {
-                    if let Some(document) =
-                        document_for_search_by_relative_path(&tx, &relative_path)?
-                    {
-                        replace_search_row(&mut writer, &fields, &document)?;
-                    }
+                } else {
+                    remove_document_for_path(&tx, &file.relative_path)?;
+                    upsert_file_state(&tx, &file, None)?;
+                    writer.delete_term(Term::from_field_text(fields.doc_key, &file.relative_path));
+                    search_deleted.push(file.relative_path.clone());
                 }
 
-                if needs_search_update {
-                    search_synced.push((relative_path, content_hash));
-                }
+                summary.updated += 1;
             }
 
+            let mut deleted_paths = std::collections::BTreeSet::new();
             let indexed_paths = indexed_file_paths(&tx)?;
             for relative_path in indexed_paths {
                 if discovered_relative_paths.contains(&relative_path) {
                     continue;
                 }
-                if let Some(slug) = document_slug_by_relative_path(&tx, &relative_path)? {
-                    tx.execute("delete from links where source_slug = ?1", [slug])?;
-                }
-                tx.execute(
-                    "delete from documents where relative_path = ?1",
-                    [&relative_path],
-                )?;
+                remove_document_for_path(&tx, &relative_path)?;
                 tx.execute(
                     "update files set status = 'deleted', indexed_at = ?2 where relative_path = ?1",
                     params![relative_path, unix_timestamp()],
                 )?;
                 writer.delete_term(Term::from_field_text(fields.doc_key, &relative_path));
-                search_deleted.push(relative_path);
+                search_deleted.push(relative_path.clone());
+                deleted_paths.insert(relative_path);
+                summary.deleted += 1;
             }
 
             for relative_path in document_paths(&tx)? {
                 if discovered_relative_paths.contains(&relative_path) {
                     continue;
                 }
-                if let Some(slug) = document_slug_by_relative_path(&tx, &relative_path)? {
-                    tx.execute("delete from links where source_slug = ?1", [slug])?;
-                }
-                tx.execute(
-                    "delete from documents where relative_path = ?1",
-                    [&relative_path],
-                )?;
+                remove_document_for_path(&tx, &relative_path)?;
                 writer.delete_term(Term::from_field_text(fields.doc_key, &relative_path));
-                search_deleted.push(relative_path);
+                search_deleted.push(relative_path.clone());
+                if deleted_paths.insert(relative_path) {
+                    summary.deleted += 1;
+                }
             }
         }
 
         tx.commit().context("commit sqlite index transaction")?;
         writer.commit().context("commit tantivy index")?;
         mark_search_synced(&conn, &search_synced, &search_deleted)?;
-        Ok(())
+        Ok(summary)
     }
 
     fn open_db(&self) -> Result<Connection> {
@@ -554,6 +627,8 @@ fn create_schema(conn: &Connection) -> Result<()> {
         create table if not exists files (
           relative_path text primary key,
           absolute_path text not null,
+          kind text not null,
+          extension text not null,
           size_bytes integer not null,
           modified_ns integer,
           content_hash text not null,
@@ -569,12 +644,36 @@ fn create_schema(conn: &Connection) -> Result<()> {
         create index if not exists files_status on files(status);
         "#,
     )?;
+    ensure_column(
+        conn,
+        "files",
+        "kind",
+        "alter table files add column kind text not null default 'markdown'",
+    )?;
+    ensure_column(
+        conn,
+        "files",
+        "extension",
+        "alter table files add column extension text not null default 'md'",
+    )?;
+    Ok(())
+}
+
+fn ensure_column(conn: &Connection, table: &str, column: &str, ddl: &str) -> Result<()> {
+    let mut statement = conn.prepare(&format!("pragma table_info({table})"))?;
+    let rows = statement.query_map([], |row| row.get::<_, String>(1))?;
+    for row in rows {
+        if row? == column {
+            return Ok(());
+        }
+    }
+    conn.execute(ddl, [])?;
     Ok(())
 }
 
 fn file_index_state(conn: &Connection, relative_path: &str) -> Result<Option<FileIndexState>> {
     conn.query_row(
-        "select content_hash, search_hash, parser_version, status from files where relative_path = ?1",
+        "select content_hash, search_hash, parser_version, status, kind, extension from files where relative_path = ?1",
         [relative_path],
         |row| {
             Ok(FileIndexState {
@@ -582,6 +681,8 @@ fn file_index_state(conn: &Connection, relative_path: &str) -> Result<Option<Fil
                 search_hash: row.get(1)?,
                 parser_version: row.get(2)?,
                 status: row.get(3)?,
+                kind: row.get(4)?,
+                extension: row.get(5)?,
             })
         },
     )
@@ -654,20 +755,19 @@ fn insert_links(conn: &Connection, document: &IndexedDocument) -> Result<()> {
 
 fn upsert_file_state(
     conn: &Connection,
-    document: &IndexedDocument,
-    size_bytes: i64,
-    modified_ns: Option<i64>,
-    content_hash: &str,
+    file: &DiscoveredFile,
     previous_search_hash: Option<String>,
 ) -> Result<()> {
     conn.execute(
         r#"
         insert into files (
-          relative_path, absolute_path, size_bytes, modified_ns, content_hash,
+          relative_path, absolute_path, kind, extension, size_bytes, modified_ns, content_hash,
           search_hash, indexed_at, parser_version, status
-        ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'indexed')
+        ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'indexed')
         on conflict(relative_path) do update set
           absolute_path = excluded.absolute_path,
+          kind = excluded.kind,
+          extension = excluded.extension,
           size_bytes = excluded.size_bytes,
           modified_ns = excluded.modified_ns,
           content_hash = excluded.content_hash,
@@ -677,11 +777,13 @@ fn upsert_file_state(
           status = 'indexed'
         "#,
         params![
-            document.relative_path,
-            document.path.to_string_lossy(),
-            size_bytes,
-            modified_ns,
-            content_hash,
+            file.relative_path,
+            file.path.to_string_lossy(),
+            file.kind,
+            file.extension,
+            file.size_bytes,
+            file.modified_ns,
+            file.content_hash,
             previous_search_hash,
             unix_timestamp(),
             PARSER_VERSION,
@@ -695,6 +797,25 @@ fn indexed_file_paths(conn: &Connection) -> Result<Vec<String>> {
     let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
     rows.collect::<rusqlite::Result<Vec<_>>>()
         .map_err(Into::into)
+}
+
+fn stale_indexed_hashes(
+    conn: &Connection,
+    discovered_relative_paths: &std::collections::BTreeSet<String>,
+) -> Result<std::collections::BTreeSet<String>> {
+    let mut statement =
+        conn.prepare("select relative_path, content_hash from files where status = 'indexed'")?;
+    let rows = statement.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let mut hashes = std::collections::BTreeSet::new();
+    for row in rows {
+        let (relative_path, content_hash) = row?;
+        if !discovered_relative_paths.contains(&relative_path) {
+            hashes.insert(content_hash);
+        }
+    }
+    Ok(hashes)
 }
 
 fn document_paths(conn: &Connection) -> Result<Vec<String>> {
@@ -715,6 +836,17 @@ fn document_slug_by_relative_path(
     )
     .optional()
     .map_err(Into::into)
+}
+
+fn remove_document_for_path(conn: &Connection, relative_path: &str) -> Result<()> {
+    if let Some(slug) = document_slug_by_relative_path(conn, relative_path)? {
+        conn.execute("delete from links where source_slug = ?1", [slug])?;
+    }
+    conn.execute(
+        "delete from documents where relative_path = ?1",
+        [relative_path],
+    )?;
+    Ok(())
 }
 
 fn document_for_search_by_relative_path(
@@ -790,19 +922,48 @@ fn sqlite_sidecar_path(db_path: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(path)
 }
 
-fn discover_markdown_paths(root: &Path) -> Result<Vec<PathBuf>> {
-    let mut paths = Vec::new();
+fn discover_vault_files(root: &Path) -> Result<Vec<DiscoveredFile>> {
+    let mut files = Vec::new();
     for entry in WalkDir::new(root).into_iter().filter_map(Result::ok) {
         let path = entry.path();
-        if !entry.file_type().is_file()
-            || path.extension().and_then(|ext| ext.to_str()) != Some("md")
-        {
+        if !entry.file_type().is_file() {
             continue;
         }
-        paths.push(path.to_path_buf());
+        let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+        let metadata =
+            fs::metadata(path).with_context(|| format!("read metadata {}", path.display()))?;
+        let extension = normalized_extension(path);
+        files.push(DiscoveredFile {
+            path: path.to_path_buf(),
+            relative_path: relative_path_for(root, path),
+            kind: kind_for_extension(&extension).to_string(),
+            extension,
+            size_bytes: metadata.len() as i64,
+            modified_ns: metadata.modified().ok().and_then(system_time_nanos),
+            content_hash: content_hash_bytes(&bytes),
+        });
     }
-    paths.sort();
-    Ok(paths)
+    files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+    Ok(files)
+}
+
+fn normalized_extension(path: &Path) -> String {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.to_ascii_lowercase())
+        .unwrap_or_default()
+}
+
+fn kind_for_extension(extension: &str) -> &'static str {
+    match extension {
+        "md" | "markdown" => "markdown",
+        "yaml" | "yml" => "yaml",
+        "json" | "jsonl" => "json",
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "heic" | "svg" => "image",
+        "pdf" => "pdf",
+        "csv" | "tsv" | "xlsx" | "xls" => "data",
+        _ => "file",
+    }
 }
 
 fn parse_markdown_source(path: &Path, root: &Path, source: &str) -> Result<IndexedDocument> {
@@ -845,9 +1006,9 @@ fn parse_markdown_source(path: &Path, root: &Path, source: &str) -> Result<Index
     })
 }
 
-fn content_hash(source: &str) -> String {
+fn content_hash_bytes(source: &[u8]) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(source.as_bytes());
+    hasher.update(source);
     format!("{:x}", hasher.finalize())
 }
 
