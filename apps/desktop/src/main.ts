@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import "./styles.css";
 
 type VaultStats = {
@@ -85,12 +86,18 @@ type RefreshSnapshot = {
   index_summary: IndexSummary;
 };
 
+type WatchStatus = {
+  watching: boolean;
+  path: string | null;
+};
+
 type SaveSnapshot = {
   stats: VaultStats;
   document: DocumentView;
 };
 
 type AppMode = "setup" | "indexing" | "ready" | "error";
+type IndexHealth = "idle" | "watching" | "updating" | "stale" | "error";
 type FileViewMode = "folders" | "newest" | "recent";
 type CalendarDay = {
   date: Date;
@@ -127,8 +134,13 @@ let editSource = "";
 let editError = "";
 let lastRefreshAt: Date | null = null;
 let refreshTimer: number | null = null;
+let watchDebounceTimer: number | null = null;
+let watchUnlisten: UnlistenFn | null = null;
+let watchErrorUnlisten: UnlistenFn | null = null;
+let indexHealth: IndexHealth = "idle";
 
 const AUTO_REFRESH_MS = 10 * 60 * 1000;
+const WATCH_DEBOUNCE_MS = 1200;
 
 const formatScore = new Intl.NumberFormat("en", {
   maximumFractionDigits: 2,
@@ -437,7 +449,8 @@ function renderVaultSetup() {
           <strong title="${escapeAttribute(vaultPath)}">${escapeHtml(formatVaultName(vaultPath))}</strong>
           <small>${escapeHtml(formatVaultSummary())}</small>
         </div>
-        <div class="compact-actions compact-actions-single">
+        <div class="compact-actions">
+          <button id="reset-index-button" class="secondary-button" type="button" title="Reset rebuildable cache only" ${isRefreshing ? "disabled" : ""}>Reset cache</button>
           <button id="change-vault-button" class="secondary-button" type="button">Change</button>
         </div>
       </section>
@@ -485,7 +498,11 @@ function bindEvents() {
   document.querySelector<HTMLButtonElement>("#cancel-edit-button")?.addEventListener("click", cancelEditMode);
   document.querySelector<HTMLButtonElement>("#change-vault-button")?.addEventListener("click", () => {
     showVaultSetup = true;
+    void stopWatchingVault();
     render();
+  });
+  document.querySelector<HTMLButtonElement>("#reset-index-button")?.addEventListener("click", () => {
+    void resetIndex();
   });
   document.querySelector<HTMLInputElement>("#vault-path")?.addEventListener("input", (event) => {
     vaultPath = (event.target as HTMLInputElement).value;
@@ -573,7 +590,9 @@ async function loadDefaultPath() {
 async function indexVault() {
   try {
     stopAutoRefresh();
+    await stopWatchingVault();
     appMode = "indexing";
+    indexHealth = "updating";
     lastError = "";
     statusText = "Syncing vault in background...";
     render();
@@ -590,17 +609,113 @@ async function indexVault() {
     lastRefreshAt = new Date();
     appMode = "ready";
     showVaultSetup = false;
+    await startWatchingVault();
     startAutoRefresh();
   } catch (error) {
     lastError = String(error);
     statusText = "Sync failed";
     appMode = "error";
+    indexHealth = "error";
     showVaultSetup = true;
   }
   render();
 }
 
-async function refreshIndexInBackground(reason: "timer" | "focus" = "timer") {
+async function resetIndex() {
+  try {
+    stopAutoRefresh();
+    await stopWatchingVault();
+    appMode = "indexing";
+    indexHealth = "updating";
+    lastError = "";
+    statusText = "Resetting rebuildable cache...";
+    render();
+
+    const snapshot = await invoke<IndexSnapshot>("reset_index", { vaultPath });
+    currentStats = snapshot.stats;
+    currentDocument = snapshot.first_document;
+    fileBrowserSnapshot = await invoke<FileBrowserSnapshot>("file_browser");
+    resetEditState();
+    backStack = [];
+    forwardStack = [];
+    searchResults = [];
+    currentSearchQuery = "";
+    lastRefreshAt = new Date();
+    appMode = "ready";
+    showVaultSetup = false;
+    await startWatchingVault();
+    startAutoRefresh();
+    statusText = `Reset cache and synced ${snapshot.stats.documents} documents · ${formatIndexSummary(snapshot.index_summary)}`;
+  } catch (error) {
+    lastError = String(error);
+    statusText = "Reset failed";
+    appMode = "error";
+    indexHealth = "error";
+    showVaultSetup = true;
+  }
+  render();
+}
+
+async function startWatchingVault() {
+  const status = await invoke<WatchStatus>("start_vault_watcher", { vaultPath });
+  await installWatchListeners();
+  indexHealth = status.watching ? "watching" : "idle";
+}
+
+async function stopWatchingVault() {
+  clearWatchDebounce();
+  if (watchUnlisten) {
+    watchUnlisten();
+    watchUnlisten = null;
+  }
+  if (watchErrorUnlisten) {
+    watchErrorUnlisten();
+    watchErrorUnlisten = null;
+  }
+  try {
+    await invoke<WatchStatus>("stop_vault_watcher");
+  } catch {
+    // Watcher shutdown should not block opening a different vault.
+  }
+  indexHealth = "idle";
+}
+
+async function installWatchListeners() {
+  if (watchUnlisten) {
+    watchUnlisten();
+  }
+  if (watchErrorUnlisten) {
+    watchErrorUnlisten();
+  }
+  watchUnlisten = await listen("vault_changed", () => {
+    indexHealth = "stale";
+    statusText = "Vault changed; syncing soon";
+    scheduleWatchedRefresh();
+    render();
+  });
+  watchErrorUnlisten = await listen<string>("vault_watch_error", (event) => {
+    indexHealth = "error";
+    statusText = `Watch failed: ${event.payload}`;
+    render();
+  });
+}
+
+function scheduleWatchedRefresh() {
+  clearWatchDebounce();
+  watchDebounceTimer = window.setTimeout(() => {
+    watchDebounceTimer = null;
+    void refreshIndexInBackground("watcher");
+  }, WATCH_DEBOUNCE_MS);
+}
+
+function clearWatchDebounce() {
+  if (watchDebounceTimer !== null) {
+    window.clearTimeout(watchDebounceTimer);
+    watchDebounceTimer = null;
+  }
+}
+
+async function refreshIndexInBackground(reason: "timer" | "focus" | "watcher" = "timer") {
   if (appMode !== "ready" || !vaultPath || isRefreshing || isEditing) {
     return;
   }
@@ -610,6 +725,7 @@ async function refreshIndexInBackground(reason: "timer" | "focus" = "timer") {
 
   const openPath = currentDocument?.relative_path ?? null;
   isRefreshing = true;
+  indexHealth = "updating";
   statusText = "Syncing changes in background...";
   render();
 
@@ -628,8 +744,10 @@ async function refreshIndexInBackground(reason: "timer" | "focus" = "timer") {
     backStack = [];
     forwardStack = [];
 
+    indexHealth = "watching";
     statusText = `Updated ${formatRefreshTime(lastRefreshAt)} · ${formatIndexSummary(snapshot.index_summary)}`;
   } catch (error) {
+    indexHealth = "error";
     statusText = `Background update failed: ${String(error)}`;
   } finally {
     isRefreshing = false;
@@ -723,6 +841,7 @@ async function saveEditMode() {
     backStack = [];
     forwardStack = [];
     lastRefreshAt = new Date();
+    indexHealth = "watching";
     resetEditState();
     statusText = `Saved ${currentDocument.filename}`;
   } catch (error) {
@@ -817,14 +936,28 @@ function formatStats(stats: VaultStats | null) {
 
 function formatVaultSummary() {
   const stats = formatStats(currentStats);
-  if (isRefreshing) {
-    return `${stats} · syncing`;
-  }
+  const health = formatIndexHealth();
   if (lastRefreshAt) {
-    return `${stats} · synced ${formatRefreshTime(lastRefreshAt)}`;
+    return `${stats} · ${health} · synced ${formatRefreshTime(lastRefreshAt)}`;
   }
 
-  return stats;
+  return `${stats} · ${health}`;
+}
+
+function formatIndexHealth() {
+  if (isRefreshing || indexHealth === "updating") {
+    return "updating";
+  }
+  if (indexHealth === "watching") {
+    return "watching";
+  }
+  if (indexHealth === "stale") {
+    return "stale";
+  }
+  if (indexHealth === "error") {
+    return "error";
+  }
+  return "idle";
 }
 
 function formatIndexSummary(summary: IndexSummary) {

@@ -4,8 +4,9 @@ use std::sync::Mutex;
 use mvv_core::{
     DocumentView, FileBrowserSnapshot, IndexSummary, SearchHit, VaultRuntime, VaultStats,
 };
+use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 
 const DEFAULT_VAULT_PATH: &str =
     "/Users/viggomeesters/Library/Mobile Documents/iCloud~md~obsidian/Documents/vault";
@@ -14,6 +15,12 @@ const STATE_DIR_ENV: &str = "MEGA_VAULT_VIEWER_STATE_DIR";
 #[derive(Default)]
 struct AppState {
     runtime: Mutex<Option<VaultRuntime>>,
+    watcher: Mutex<Option<VaultWatcher>>,
+}
+
+struct VaultWatcher {
+    _watcher: RecommendedWatcher,
+    path: PathBuf,
 }
 
 #[derive(Debug, Serialize)]
@@ -33,6 +40,17 @@ struct RefreshSnapshot {
 struct SaveSnapshot {
     stats: VaultStats,
     document: DocumentView,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct VaultChangedPayload {
+    paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct WatchStatus {
+    watching: bool,
+    path: Option<PathBuf>,
 }
 
 #[tauri::command]
@@ -66,6 +84,70 @@ async fn index_vault(
         stats,
         first_document,
         index_summary,
+    })
+}
+
+#[tauri::command]
+async fn reset_index(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    vault_path: String,
+) -> Result<IndexSnapshot, String> {
+    let state_dir = runtime_state_dir(&app)?;
+    let snapshot = tauri::async_runtime::spawn_blocking(move || {
+        VaultRuntime::reset_runtime_state(&state_dir)?;
+        let runtime = VaultRuntime::build(&vault_path, state_dir)?;
+        let stats = runtime.stats()?;
+        let first_document = runtime.first_document()?;
+        let index_summary = runtime.index_summary();
+
+        Ok::<_, anyhow::Error>((runtime, stats, first_document, index_summary))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+    .map_err(|error| error.to_string())?;
+
+    let (runtime, stats, first_document, index_summary) = snapshot;
+
+    *state.runtime.lock().map_err(|_| "runtime lock poisoned")? = Some(runtime);
+    Ok(IndexSnapshot {
+        stats,
+        first_document,
+        index_summary,
+    })
+}
+
+#[tauri::command]
+fn start_vault_watcher(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    vault_path: String,
+) -> Result<WatchStatus, String> {
+    let path = PathBuf::from(vault_path);
+    let watcher = create_vault_watcher(app, path)?;
+    let status = WatchStatus {
+        watching: true,
+        path: Some(watcher.path.clone()),
+    };
+    *state.watcher.lock().map_err(|_| "watcher lock poisoned")? = Some(watcher);
+    Ok(status)
+}
+
+#[tauri::command]
+fn stop_vault_watcher(state: State<'_, AppState>) -> Result<WatchStatus, String> {
+    *state.watcher.lock().map_err(|_| "watcher lock poisoned")? = None;
+    Ok(WatchStatus {
+        watching: false,
+        path: None,
+    })
+}
+
+#[tauri::command]
+fn watch_status(state: State<'_, AppState>) -> Result<WatchStatus, String> {
+    let guard = state.watcher.lock().map_err(|_| "watcher lock poisoned")?;
+    Ok(WatchStatus {
+        watching: guard.is_some(),
+        path: guard.as_ref().map(|watcher| watcher.path.clone()),
     })
 }
 
@@ -205,6 +287,32 @@ fn runtime_state_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         .unwrap_or_else(|| app.path().app_data_dir().map_err(|error| error.to_string()))
 }
 
+fn create_vault_watcher(app: tauri::AppHandle, path: PathBuf) -> Result<VaultWatcher, String> {
+    let emit_app = app.clone();
+    let mut watcher =
+        notify::recommended_watcher(move |event: notify::Result<notify::Event>| match event {
+            Ok(event) => {
+                let paths = event
+                    .paths
+                    .iter()
+                    .map(|path| path.to_string_lossy().to_string())
+                    .collect();
+                let _ = emit_app.emit("vault_changed", VaultChangedPayload { paths });
+            }
+            Err(error) => {
+                let _ = emit_app.emit("vault_watch_error", error.to_string());
+            }
+        })
+        .map_err(|error| error.to_string())?;
+    watcher
+        .watch(&path, RecursiveMode::Recursive)
+        .map_err(|error| error.to_string())?;
+    Ok(VaultWatcher {
+        _watcher: watcher,
+        path,
+    })
+}
+
 fn explicit_state_dir(value: Option<std::ffi::OsString>) -> Option<PathBuf> {
     let path = PathBuf::from(value?);
     if path.as_os_str().is_empty() {
@@ -220,7 +328,11 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             default_vault_path,
             index_vault,
+            reset_index,
             refresh_index,
+            start_vault_watcher,
+            stop_vault_watcher,
+            watch_status,
             search,
             open_document,
             open_document_by_id,
