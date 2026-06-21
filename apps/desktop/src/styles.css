@@ -179,6 +179,27 @@ a:focus-visible {
   grid-template-columns: 1fr;
 }
 
+.primary-nav {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.primary-tab {
+  min-height: 34px;
+  border-color: #2d353c;
+  background: #111417;
+  color: #9ba7b2;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.primary-tab:hover,
+.primary-tab.is-active {
+  background: #22313a;
+  color: #edf1f5;
+}
+
 .secondary-button {
   min-height: 36px;
   background: #20262b;
@@ -427,6 +448,11 @@ a:focus-visible {
 
 .file-item:hover {
   background: #1f252a;
+}
+
+.file-item.is-current {
+  border-color: #5baed0;
+  background: #12212a;
 }
 
 .file-item strong,

@@ -111,11 +111,23 @@ pub struct DailyNoteEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VaultGroupEntry {
+    pub name: String,
+    pub count: usize,
+    pub latest_title: String,
+    pub latest_relative_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FileBrowserSnapshot {
     pub folders: Vec<FolderEntry>,
     pub newest_files: Vec<FileBrowserItem>,
     pub recent_files: Vec<FileBrowserItem>,
     pub daily_notes: Vec<DailyNoteEntry>,
+    pub today_items: Vec<FileBrowserItem>,
+    pub timeline_items: Vec<FileBrowserItem>,
+    pub entities: Vec<VaultGroupEntry>,
+    pub projects: Vec<VaultGroupEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -464,6 +476,10 @@ impl VaultRuntime {
 
         let folders = folder_entries(&files);
         let daily_notes = daily_note_entries(&files);
+        let today_items = today_items(&files);
+        let timeline_items = timeline_items(&files);
+        let entities = grouped_metadata_entries(&conn, GroupKind::Entity)?;
+        let projects = grouped_metadata_entries(&conn, GroupKind::Project)?;
         let mut newest_files = files.clone();
         newest_files.sort_by_key(|file| std::cmp::Reverse(file.created_at.unwrap_or(0)));
         newest_files.truncate(40);
@@ -477,6 +493,10 @@ impl VaultRuntime {
             newest_files,
             recent_files,
             daily_notes,
+            today_items,
+            timeline_items,
+            entities,
+            projects,
         })
     }
 
@@ -1312,10 +1332,51 @@ fn split_frontmatter(source: &str) -> (Option<serde_json::Value>, Option<String>
             ),
         },
         Err(error) => (
-            None,
+            parse_frontmatter_fallback(yaml),
             Some(format!("frontmatter parse failed: {error}")),
             body,
         ),
+    }
+}
+
+fn parse_frontmatter_fallback(yaml: &str) -> Option<serde_json::Value> {
+    let mut object = serde_json::Map::new();
+    for line in yaml.lines() {
+        if line.starts_with(' ') || line.starts_with('\t') || line.trim_start().starts_with('-') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        let key = key.trim();
+        let value = value.trim();
+        if key.is_empty() || value.is_empty() {
+            continue;
+        }
+        if value.starts_with('[') && value.ends_with(']') {
+            let values = value
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+                .split(',')
+                .map(|item| item.trim().trim_matches('"').trim_matches('\''))
+                .filter(|item| !item.is_empty())
+                .map(|item| serde_json::Value::String(item.to_string()))
+                .collect::<Vec<_>>();
+            object.insert(key.to_string(), serde_json::Value::Array(values));
+            continue;
+        }
+        if value.starts_with('[') || value.starts_with('{') {
+            continue;
+        }
+        object.insert(
+            key.to_string(),
+            serde_json::Value::String(value.trim_matches('"').trim_matches('\'').to_string()),
+        );
+    }
+    if object.is_empty() {
+        None
+    } else {
+        Some(serde_json::Value::Object(object))
     }
 }
 
@@ -2080,6 +2141,158 @@ fn daily_note_entries(files: &[FileBrowserItem]) -> Vec<DailyNoteEntry> {
     entries
 }
 
+fn today_items(files: &[FileBrowserItem]) -> Vec<FileBrowserItem> {
+    let today = unix_timestamp() as u64 / 86_400;
+    let mut items = files
+        .iter()
+        .filter(|file| {
+            file.created_at
+                .or(file.modified_at)
+                .map(|timestamp| timestamp / 86_400 == today)
+                .unwrap_or(false)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    items.sort_by_key(|file| std::cmp::Reverse(file.created_at.or(file.modified_at).unwrap_or(0)));
+    items.truncate(40);
+    items
+}
+
+fn timeline_items(files: &[FileBrowserItem]) -> Vec<FileBrowserItem> {
+    let mut items = files.to_vec();
+    items.sort_by_key(|file| std::cmp::Reverse(file.created_at.or(file.modified_at).unwrap_or(0)));
+    items.truncate(120);
+    items
+}
+
+#[derive(Debug, Clone, Copy)]
+enum GroupKind {
+    Entity,
+    Project,
+}
+
+fn grouped_metadata_entries(conn: &Connection, kind: GroupKind) -> Result<Vec<VaultGroupEntry>> {
+    use std::collections::BTreeMap;
+
+    let mut statement = conn.prepare(
+        r#"
+        select d.title, d.relative_path, d.frontmatter_json, coalesce(f.modified_ns, 0)
+        from documents d
+        left join files f on f.relative_path = d.relative_path
+        order by d.relative_path
+        "#,
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Option<String>>(2)?,
+            row.get::<_, i64>(3)?,
+        ))
+    })?;
+
+    let mut grouped: BTreeMap<String, (usize, i64, String, String)> = BTreeMap::new();
+    for row in rows {
+        let (title, relative_path, frontmatter_json, modified_ns) = row?;
+        let frontmatter = frontmatter_json
+            .as_deref()
+            .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok());
+        let mut names = match kind {
+            GroupKind::Entity => frontmatter
+                .as_ref()
+                .map(|value| metadata_values(value, &["entity", "entities"]))
+                .unwrap_or_default(),
+            GroupKind::Project => frontmatter
+                .as_ref()
+                .map(|value| metadata_values(value, &["project", "projects"]))
+                .unwrap_or_default(),
+        };
+        if matches!(kind, GroupKind::Project) {
+            if let Some(project) = project_from_path(&relative_path) {
+                names.push(project);
+            }
+        }
+        if matches!(kind, GroupKind::Entity) && names.is_empty() {
+            names.extend(link_targets_for_document(conn, &relative_path)?);
+        }
+
+        for name in names.into_iter().filter(|name| !name.trim().is_empty()) {
+            let entry = grouped
+                .entry(name)
+                .or_insert_with(|| (0, i64::MIN, String::new(), String::new()));
+            entry.0 += 1;
+            if modified_ns >= entry.1 {
+                entry.1 = modified_ns;
+                entry.2 = title.clone();
+                entry.3 = relative_path.clone();
+            }
+        }
+    }
+
+    let mut entries = grouped
+        .into_iter()
+        .map(
+            |(name, (count, _, latest_title, latest_relative_path))| VaultGroupEntry {
+                name,
+                count,
+                latest_title,
+                latest_relative_path,
+            },
+        )
+        .collect::<Vec<_>>();
+    entries.sort_by(|left, right| {
+        right
+            .count
+            .cmp(&left.count)
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    entries.truncate(80);
+    Ok(entries)
+}
+
+fn metadata_values(frontmatter: &serde_json::Value, keys: &[&str]) -> Vec<String> {
+    let mut values = Vec::new();
+    for key in keys {
+        collect_metadata_value(frontmatter.get(*key), &mut values);
+    }
+    values.sort();
+    values.dedup();
+    values
+}
+
+fn collect_metadata_value(value: Option<&serde_json::Value>, output: &mut Vec<String>) {
+    match value {
+        Some(serde_json::Value::String(value)) => output.push(value.clone()),
+        Some(serde_json::Value::Array(values)) => {
+            for value in values {
+                collect_metadata_value(Some(value), output);
+            }
+        }
+        Some(value) if value.is_number() || value.is_boolean() => output.push(value.to_string()),
+        _ => {}
+    }
+}
+
+fn project_from_path(relative_path: &str) -> Option<String> {
+    let mut parts = relative_path.split('/');
+    let first = parts.next()?;
+    if first.eq_ignore_ascii_case("projects") || first == "40_projects" {
+        return parts.next().map(str::to_string);
+    }
+    None
+}
+
+fn link_targets_for_document(conn: &Connection, relative_path: &str) -> Result<Vec<String>> {
+    let Some(slug) = document_slug_by_relative_path(conn, relative_path)? else {
+        return Ok(Vec::new());
+    };
+    collect_strings(
+        conn,
+        "select target_slug from links where source_slug = ?1 order by target_slug limit 8",
+        &slug,
+    )
+}
+
 fn daily_note_date(filename: &str, relative_path: &str) -> Option<String> {
     if !filename.ends_with("-daily.md") || !relative_path.starts_with("10_notes/") {
         return None;
@@ -2160,6 +2373,18 @@ mod tests {
         let (frontmatter, error, body) = split_frontmatter("---\ntitle: Test\n---\n# Body\n");
         assert_eq!(frontmatter.unwrap()["title"].as_str(), Some("Test"));
         assert_eq!(error, None);
+        assert_eq!(body, "# Body\n");
+    }
+
+    #[test]
+    fn keeps_simple_metadata_when_frontmatter_has_unparseable_lines() {
+        let (frontmatter, error, body) = split_frontmatter(
+            "---\ntitle: [broken\nproject: alpha\nentity: [viggo]\n---\n# Body\n",
+        );
+        let frontmatter = frontmatter.unwrap();
+        assert!(error.unwrap().contains("frontmatter parse failed"));
+        assert_eq!(frontmatter["project"].as_str(), Some("alpha"));
+        assert_eq!(frontmatter["entity"][0].as_str(), Some("viggo"));
         assert_eq!(body, "# Body\n");
     }
 

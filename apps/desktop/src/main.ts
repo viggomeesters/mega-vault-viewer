@@ -87,11 +87,22 @@ type DailyNoteEntry = {
   relative_path: string;
 };
 
+type VaultGroupEntry = {
+  name: string;
+  count: number;
+  latest_title: string;
+  latest_relative_path: string;
+};
+
 type FileBrowserSnapshot = {
   folders: FolderEntry[];
   newest_files: FileBrowserItem[];
   recent_files: FileBrowserItem[];
   daily_notes: DailyNoteEntry[];
+  today_items: FileBrowserItem[];
+  timeline_items: FileBrowserItem[];
+  entities: VaultGroupEntry[];
+  projects: VaultGroupEntry[];
 };
 
 type IndexSnapshot = {
@@ -117,6 +128,7 @@ type SaveSnapshot = {
 
 type AppMode = "setup" | "indexing" | "ready" | "error";
 type IndexHealth = "idle" | "watching" | "updating" | "stale" | "error";
+type PrimaryView = "today" | "timeline" | "entities" | "projects" | "files" | "search" | "detail";
 type FileViewMode = "folders" | "newest" | "recent";
 type CalendarDay = {
   date: Date;
@@ -136,6 +148,7 @@ let currentDocument: VaultItemView | null = null;
 let currentStats: VaultStats | null = null;
 let searchResults: SearchHit[] = [];
 let fileBrowserSnapshot: FileBrowserSnapshot | null = null;
+let primaryView: PrimaryView = "today";
 let fileViewMode: FileViewMode = "folders";
 let calendarMonth = startOfMonth(new Date());
 let statusText = "Ready";
@@ -176,11 +189,16 @@ function render() {
 
         ${renderVaultSetup()}
         ${renderDailyCalendar()}
+        ${renderPrimaryNavigation()}
 
-        <label class="field">
-          <span>Search</span>
-          <input id="search-box" name="search" value="${escapeAttribute(currentSearchQuery)}" placeholder="Search title, body, slug" spellcheck="false" />
-        </label>
+        ${
+          primaryView === "search"
+            ? `<label class="field">
+                <span>Search</span>
+                <input id="search-box" name="search" value="${escapeAttribute(currentSearchQuery)}" placeholder="Search title, body, slug, path" spellcheck="false" />
+              </label>`
+            : ""
+        }
 
         <div class="results" aria-label="Search results">
           ${renderSidebarExplorer()}
@@ -410,6 +428,31 @@ function renderSearchHit(hit: SearchHit) {
   `;
 }
 
+function renderPrimaryNavigation() {
+  const tabs: Array<[PrimaryView, string]> = [
+    ["today", "Today"],
+    ["timeline", "Timeline"],
+    ["entities", "Entities"],
+    ["projects", "Projects"],
+    ["files", "Files"],
+    ["search", "Search"],
+    ["detail", "Detail"],
+  ];
+  return `
+    <nav class="primary-nav" aria-label="Vault views">
+      ${tabs.map(([view, label]) => renderPrimaryTab(view, label)).join("")}
+    </nav>
+  `;
+}
+
+function renderPrimaryTab(view: PrimaryView, label: string) {
+  return `
+    <button class="primary-tab ${primaryView === view ? "is-active" : ""}" type="button" data-primary-view="${view}" aria-current="${primaryView === view ? "page" : "false"}">
+      ${escapeHtml(label)}
+    </button>
+  `;
+}
+
 function renderDailyCalendar() {
   const dailyNotes = dailyNotesByDate();
   const days = calendarDays(calendarMonth);
@@ -451,13 +494,30 @@ function renderCalendarDay(day: CalendarDay, dailyNote: DailyNoteEntry | undefin
 }
 
 function renderSidebarExplorer() {
-  const hasSearch = currentSearchQuery.trim().length > 0;
+  if (primaryView === "today") {
+    return renderItemListSection("Today", fileBrowserSnapshot?.today_items ?? [], "No indexed items for today.");
+  }
+  if (primaryView === "timeline") {
+    return renderItemListSection("Timeline", fileBrowserSnapshot?.timeline_items ?? [], "No timeline items.");
+  }
+  if (primaryView === "entities") {
+    return renderGroupSection("Entities", fileBrowserSnapshot?.entities ?? []);
+  }
+  if (primaryView === "projects") {
+    return renderGroupSection("Projects", fileBrowserSnapshot?.projects ?? []);
+  }
+  if (primaryView === "search") {
+    const hasSearch = currentSearchQuery.trim().length > 0;
+    return `<section class="sidebar-section"><h3>Search results</h3>${hasSearch ? searchResults.map(renderSearchHit).join("") || `<p class="empty">No results.</p>` : `<p class="empty">Type a query and press Enter.</p>`}</section>`;
+  }
+  if (primaryView === "detail") {
+    return renderDetailSummary();
+  }
+  return renderFilesSection();
+}
+
+function renderFilesSection() {
   return `
-    ${
-      hasSearch
-        ? `<section class="sidebar-section"><h3>Search results</h3>${searchResults.map(renderSearchHit).join("") || `<p class="empty">No results.</p>`}</section>`
-        : ""
-    }
     <section class="file-viewer" aria-label="File viewer">
       <div class="file-viewer-header">
         <h3>Files</h3>
@@ -468,6 +528,54 @@ function renderSidebarExplorer() {
         </div>
       </div>
       ${renderFileViewContent()}
+    </section>
+  `;
+}
+
+function renderItemListSection(title: string, files: FileBrowserItem[], emptyText: string) {
+  return `
+    <section class="sidebar-section">
+      <h3>${escapeHtml(title)}</h3>
+      <div class="file-list">
+        ${files.map(renderFileItem).join("") || `<p class="empty">${escapeHtml(emptyText)}</p>`}
+      </div>
+    </section>
+  `;
+}
+
+function renderGroupSection(title: string, groups: VaultGroupEntry[]) {
+  return `
+    <section class="sidebar-section">
+      <h3>${escapeHtml(title)}</h3>
+      <div class="file-list">
+        ${groups.map(renderGroupItem).join("") || `<p class="empty">No indexed ${escapeHtml(title.toLowerCase())} yet.</p>`}
+      </div>
+    </section>
+  `;
+}
+
+function renderGroupItem(group: VaultGroupEntry) {
+  return `
+    <button class="file-item group-item" type="button" data-relative-path="${escapeAttribute(group.latest_relative_path)}" title="${escapeAttribute(group.latest_relative_path)}">
+      <strong>${escapeHtml(group.name)}</strong>
+      <span>${group.count} item${group.count === 1 ? "" : "s"} · ${escapeHtml(group.latest_title)}</span>
+    </button>
+  `;
+}
+
+function renderDetailSummary() {
+  if (!currentDocument) {
+    return `<section class="sidebar-section"><h3>Detail</h3><p class="empty">No item open.</p></section>`;
+  }
+  return `
+    <section class="sidebar-section">
+      <h3>Detail</h3>
+      <div class="file-list">
+        <button class="file-item is-current" type="button" data-relative-path="${escapeAttribute(currentDocument.relative_path)}">
+          <strong>${escapeHtml(currentDocument.filename)}</strong>
+          <span>${escapeHtml(currentDocument.kind)} · ${escapeHtml(currentDocument.relative_path)}</span>
+        </button>
+      </div>
     </section>
   `;
 }
@@ -604,6 +712,15 @@ function bindEvents() {
   });
   document.querySelector<HTMLInputElement>("#search-box")?.addEventListener("input", (event) => {
     currentSearchQuery = (event.target as HTMLInputElement).value;
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-primary-view]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const view = button.dataset.primaryView;
+      if (isPrimaryView(view)) {
+        primaryView = view;
+        render();
+      }
+    });
   });
   document.querySelectorAll<HTMLButtonElement>("[data-calendar-action]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -987,6 +1104,7 @@ function applyOpenedDocument(document: VaultItemView, status: string, recordHist
 
   resetEditState();
   currentDocument = document;
+  primaryView = "detail";
   statusText = status;
 }
 
@@ -1106,6 +1224,18 @@ function formatBytes(bytes: number) {
 
 function isMarkdownItem(item: VaultItemView) {
   return item.kind === "markdown";
+}
+
+function isPrimaryView(value: string | undefined): value is PrimaryView {
+  return (
+    value === "today" ||
+    value === "timeline" ||
+    value === "entities" ||
+    value === "projects" ||
+    value === "files" ||
+    value === "search" ||
+    value === "detail"
+  );
 }
 
 function dailyNotesByDate() {

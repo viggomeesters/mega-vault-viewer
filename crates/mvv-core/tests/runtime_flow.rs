@@ -569,6 +569,8 @@ fn opens_mixed_format_vault_items_without_rewriting_sources() {
         r#"---
 title: Mixed Markdown
 slug: mixed-markdown
+entity: [viggo-meesters]
+project: mega-vault-viewer
 ---
 
 # Mixed Markdown
@@ -606,6 +608,22 @@ Markdown body.
         .folders
         .iter()
         .any(|folder| folder.path == "system" && folder.document_count == 3));
+    assert!(browser
+        .today_items
+        .iter()
+        .any(|file| file.relative_path == "10_notes/mixed.md"));
+    assert!(browser
+        .timeline_items
+        .iter()
+        .any(|file| file.relative_path == "system/state.json"));
+    assert!(browser
+        .entities
+        .iter()
+        .any(|entry| entry.name == "viggo-meesters" && entry.count == 1));
+    assert!(browser
+        .projects
+        .iter()
+        .any(|entry| entry.name == "mega-vault-viewer" && entry.count == 1));
 
     let markdown = runtime
         .open_item_by_relative_path("10_notes/mixed.md")
