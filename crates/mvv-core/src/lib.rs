@@ -50,13 +50,16 @@ pub struct FileManifestEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SearchHit {
-    pub id: i64,
+    pub id: Option<i64>,
     pub slug: String,
     pub title: String,
     pub filename: String,
     pub stem: String,
     pub path: PathBuf,
     pub relative_path: String,
+    pub kind: String,
+    pub extension: String,
+    pub size_bytes: i64,
     pub snippet: String,
     pub score: f32,
 }
@@ -79,11 +82,15 @@ pub struct DocumentView {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FileBrowserItem {
-    pub id: i64,
+    pub id: Option<i64>,
+    pub document_id: Option<i64>,
     pub slug: String,
     pub title: String,
     pub filename: String,
     pub relative_path: String,
+    pub kind: String,
+    pub extension: String,
+    pub size_bytes: i64,
     pub modified_at: Option<u64>,
     pub created_at: Option<u64>,
 }
@@ -98,7 +105,7 @@ pub struct FolderEntry {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DailyNoteEntry {
     pub date: String,
-    pub id: i64,
+    pub id: Option<i64>,
     pub filename: String,
     pub relative_path: String,
 }
@@ -109,6 +116,34 @@ pub struct FileBrowserSnapshot {
     pub newest_files: Vec<FileBrowserItem>,
     pub recent_files: Vec<FileBrowserItem>,
     pub daily_notes: Vec<DailyNoteEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct VaultItemView {
+    pub document_id: Option<i64>,
+    pub slug: String,
+    pub title: String,
+    pub filename: String,
+    pub stem: String,
+    pub path: PathBuf,
+    pub relative_path: String,
+    pub kind: String,
+    pub extension: String,
+    pub size_bytes: i64,
+    pub modified_at: Option<u64>,
+    pub html: Option<String>,
+    pub formatted: Option<String>,
+    pub source: Option<String>,
+    pub media_data_url: Option<String>,
+    pub media_mime: Option<String>,
+    pub preview_message: Option<String>,
+    pub frontmatter: Option<serde_json::Value>,
+    pub frontmatter_error: Option<String>,
+    pub outgoing_links: Vec<String>,
+    pub backlinks: Vec<String>,
+    pub can_edit_source: bool,
+    pub can_open_system: bool,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -180,6 +215,29 @@ struct SearchDocumentRow {
     filename: String,
     relative_path: String,
     body: String,
+}
+
+#[derive(Debug, Clone)]
+struct FileRow {
+    relative_path: String,
+    absolute_path: PathBuf,
+    kind: String,
+    extension: String,
+    size_bytes: i64,
+    modified_ns: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+struct BrowserFileRow {
+    id: Option<i64>,
+    slug: String,
+    title: Option<String>,
+    path: PathBuf,
+    relative_path: String,
+    kind: String,
+    extension: String,
+    size_bytes: i64,
+    modified_ns: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -266,6 +324,7 @@ impl VaultRuntime {
                 fields.relative_path,
             ],
         );
+        let file_search_query = query.trim().to_ascii_lowercase();
         let query = parser.parse_query(query).context("parse search query")?;
         let top_docs = searcher
             .search(&query, &TopDocs::with_limit(limit))
@@ -280,18 +339,23 @@ impl VaultRuntime {
             };
             if let Some(summary) = document_summary(&conn, id as i64)? {
                 hits.push(SearchHit {
-                    id: summary.id,
+                    id: Some(summary.id),
                     slug: summary.slug,
                     title: summary.title,
                     filename: summary.filename,
                     stem: summary.stem,
                     path: summary.path,
                     relative_path: summary.relative_path,
+                    kind: "markdown".to_string(),
+                    extension: "md".to_string(),
+                    size_bytes: 0,
                     snippet: snippet_for(&summary.body),
                     score,
                 });
             }
         }
+        append_file_search_hits(&conn, &mut hits, &file_search_query, limit)?;
+        hits.truncate(limit);
         Ok(hits)
     }
 
@@ -371,30 +435,31 @@ impl VaultRuntime {
     pub fn file_browser(&self) -> Result<FileBrowserSnapshot> {
         let conn = self.open_db()?;
         let mut statement = conn.prepare(
-            "select id, slug, title, filename, path, relative_path from documents order by relative_path",
+            r#"
+            select d.id, d.slug, d.title, f.absolute_path, f.relative_path, f.kind, f.extension, f.size_bytes, f.modified_ns
+            from files f
+            left join documents d on d.relative_path = f.relative_path
+            where f.status = 'indexed'
+            order by f.relative_path
+            "#,
         )?;
         let rows = statement.query_map([], |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, String>(4)?,
-                row.get::<_, String>(5)?,
-            ))
+            Ok(BrowserFileRow {
+                id: row.get(0)?,
+                slug: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                title: row.get(2)?,
+                path: PathBuf::from(row.get::<_, String>(3)?),
+                relative_path: row.get(4)?,
+                kind: row.get(5)?,
+                extension: row.get(6)?,
+                size_bytes: row.get(7)?,
+                modified_ns: row.get(8)?,
+            })
         })?;
 
         let mut files = Vec::new();
         for row in rows {
-            let (id, slug, title, filename, path, relative_path) = row?;
-            files.push(file_browser_item(
-                id,
-                slug,
-                title,
-                filename,
-                Path::new(&path),
-                relative_path,
-            ));
+            files.push(file_browser_item(row?));
         }
 
         let folders = folder_entries(&files);
@@ -413,6 +478,55 @@ impl VaultRuntime {
             recent_files,
             daily_notes,
         })
+    }
+
+    pub fn open_item_by_relative_path(&self, relative_path: &str) -> Result<VaultItemView> {
+        let conn = self.open_db()?;
+        let file = file_row_by_relative_path(&conn, relative_path)?
+            .with_context(|| format!("file not found: {relative_path}"))?;
+        let path = self.canonical_vault_file_path(&file.absolute_path)?;
+
+        if file.kind == "markdown" {
+            return match self.open_by_relative_path(relative_path) {
+                Ok(document) => Ok(vault_item_from_document(document, &file)),
+                Err(error) => Ok(vault_item_error(
+                    &file,
+                    &path,
+                    format!("Markdown render failed: {error}"),
+                )),
+            };
+        }
+
+        Ok(match file.kind.as_str() {
+            "yaml" | "json" => self.open_text_item(&file, &path),
+            "image" => open_image_item(&file, &path),
+            "pdf" => vault_item_preview(&file, &path, "PDF preview is not available yet."),
+            _ => open_generic_item(&file, &path),
+        })
+    }
+
+    pub fn open_item_by_slug(&self, slug: &str) -> Result<VaultItemView> {
+        let document = self.open_by_slug(slug)?;
+        self.open_item_by_relative_path(&document.relative_path)
+    }
+
+    pub fn open_item_by_id(&self, id: i64) -> Result<VaultItemView> {
+        let document = self.open_by_id(id)?;
+        self.open_item_by_relative_path(&document.relative_path)
+    }
+
+    pub fn first_item(&self) -> Result<Option<VaultItemView>> {
+        let conn = self.open_db()?;
+        let relative_path = conn
+            .query_row(
+                "select relative_path from files where status = 'indexed' order by relative_path limit 1",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        relative_path
+            .map(|relative_path| self.open_item_by_relative_path(&relative_path))
+            .transpose()
     }
 
     pub fn document_source_by_relative_path(&self, relative_path: &str) -> Result<String> {
@@ -463,6 +577,57 @@ impl VaultRuntime {
             anyhow::bail!("document is not a markdown file: {}", path.display());
         }
         Ok(path)
+    }
+
+    fn canonical_vault_file_path(&self, path: &Path) -> Result<PathBuf> {
+        let path = path
+            .canonicalize()
+            .with_context(|| format!("resolve {}", path.display()))?;
+        let root = self
+            .root
+            .canonicalize()
+            .with_context(|| format!("resolve {}", self.root.display()))?;
+        if !path.starts_with(&root) {
+            anyhow::bail!("file path is outside vault: {}", path.display());
+        }
+        Ok(path)
+    }
+
+    fn open_text_item(&self, file: &FileRow, path: &Path) -> VaultItemView {
+        match fs::read_to_string(path) {
+            Ok(source) => {
+                let formatted = format_structured_source(&source, &file.extension);
+                VaultItemView {
+                    document_id: None,
+                    slug: String::new(),
+                    title: fallback_title(path),
+                    filename: filename_for(path),
+                    stem: stem_for(path),
+                    path: path.to_path_buf(),
+                    relative_path: file.relative_path.clone(),
+                    kind: file.kind.clone(),
+                    extension: file.extension.clone(),
+                    size_bytes: file.size_bytes,
+                    modified_at: file.modified_ns.and_then(nanos_to_secs),
+                    html: None,
+                    formatted: Some(formatted.unwrap_or_else(|error| error)),
+                    source: Some(source),
+                    media_data_url: None,
+                    media_mime: None,
+                    preview_message: None,
+                    frontmatter: None,
+                    frontmatter_error: None,
+                    outgoing_links: Vec::new(),
+                    backlinks: Vec::new(),
+                    can_edit_source: false,
+                    can_open_system: true,
+                    error: None,
+                }
+            }
+            Err(error) => {
+                vault_item_error(file, path, format!("Could not read text file: {error}"))
+            }
+        }
     }
 
     fn sync(&self) -> Result<IndexSummary> {
@@ -688,6 +853,94 @@ fn file_index_state(conn: &Connection, relative_path: &str) -> Result<Option<Fil
     )
     .optional()
     .map_err(Into::into)
+}
+
+fn file_row_by_relative_path(conn: &Connection, relative_path: &str) -> Result<Option<FileRow>> {
+    conn.query_row(
+        "select relative_path, absolute_path, kind, extension, size_bytes, modified_ns from files where relative_path = ?1 and status = 'indexed'",
+        [relative_path],
+        |row| {
+            Ok(FileRow {
+                relative_path: row.get(0)?,
+                absolute_path: PathBuf::from(row.get::<_, String>(1)?),
+                kind: row.get(2)?,
+                extension: row.get(3)?,
+                size_bytes: row.get(4)?,
+                modified_ns: row.get(5)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
+fn append_file_search_hits(
+    conn: &Connection,
+    hits: &mut Vec<SearchHit>,
+    query: &str,
+    limit: usize,
+) -> Result<()> {
+    if hits.len() >= limit || query.is_empty() {
+        return Ok(());
+    }
+
+    let existing_paths = hits
+        .iter()
+        .map(|hit| hit.relative_path.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    let pattern = format!("%{query}%");
+    let mut statement = conn.prepare(
+        r#"
+        select d.id, d.slug, d.title, f.absolute_path, f.relative_path, f.kind, f.extension, f.size_bytes, f.modified_ns
+        from files f
+        left join documents d on d.relative_path = f.relative_path
+        where f.status = 'indexed'
+          and lower(f.relative_path) like ?1
+        order by f.relative_path
+        limit ?2
+        "#,
+    )?;
+    let rows = statement.query_map(params![pattern, limit as i64], |row| {
+        Ok((
+            row.get::<_, Option<i64>>(0)?,
+            row.get::<_, Option<String>>(1)?,
+            row.get::<_, Option<String>>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, String>(4)?,
+            row.get::<_, String>(5)?,
+            row.get::<_, String>(6)?,
+            row.get::<_, i64>(7)?,
+            row.get::<_, Option<i64>>(8)?,
+        ))
+    })?;
+
+    for row in rows {
+        if hits.len() >= limit {
+            break;
+        }
+        let (id, slug, title, path, relative_path, kind, extension, size_bytes, modified_ns) = row?;
+        if existing_paths.contains(&relative_path) {
+            continue;
+        }
+        let path = PathBuf::from(path);
+        let filename = filename_for(&path);
+        let stem = stem_for(&path);
+        hits.push(SearchHit {
+            id,
+            slug: slug.unwrap_or_default(),
+            title: title.unwrap_or_else(|| fallback_title(&path)),
+            filename,
+            stem,
+            path,
+            relative_path: relative_path.clone(),
+            kind: kind.clone(),
+            extension,
+            size_bytes,
+            snippet: format_file_snippet(&relative_path, &kind, size_bytes, modified_ns),
+            score: 0.0,
+        });
+    }
+    Ok(())
 }
 
 fn upsert_document(conn: &Connection, document: &IndexedDocument) -> Result<i64> {
@@ -1410,6 +1663,7 @@ fn mime_for_path(path: &Path) -> Option<&'static str> {
         Some("svg") => Some("image/svg+xml"),
         Some("bmp") => Some("image/bmp"),
         Some("avif") => Some("image/avif"),
+        Some("heic") => Some("image/heic"),
         _ => None,
     }
 }
@@ -1599,6 +1853,145 @@ fn row_to_document_view(
     })
 }
 
+fn vault_item_from_document(document: DocumentView, file: &FileRow) -> VaultItemView {
+    VaultItemView {
+        document_id: Some(document.id),
+        slug: document.slug,
+        title: document.title,
+        filename: document.filename,
+        stem: document.stem,
+        path: document.path,
+        relative_path: document.relative_path,
+        kind: file.kind.clone(),
+        extension: file.extension.clone(),
+        size_bytes: file.size_bytes,
+        modified_at: file.modified_ns.and_then(nanos_to_secs),
+        html: Some(document.html),
+        formatted: None,
+        source: None,
+        media_data_url: None,
+        media_mime: None,
+        preview_message: None,
+        frontmatter: document.frontmatter,
+        frontmatter_error: document.frontmatter_error,
+        outgoing_links: document.outgoing_links,
+        backlinks: document.backlinks,
+        can_edit_source: true,
+        can_open_system: true,
+        error: None,
+    }
+}
+
+fn vault_item_preview(file: &FileRow, path: &Path, message: &str) -> VaultItemView {
+    VaultItemView {
+        document_id: None,
+        slug: String::new(),
+        title: fallback_title(path),
+        filename: filename_for(path),
+        stem: stem_for(path),
+        path: path.to_path_buf(),
+        relative_path: file.relative_path.clone(),
+        kind: file.kind.clone(),
+        extension: file.extension.clone(),
+        size_bytes: file.size_bytes,
+        modified_at: file.modified_ns.and_then(nanos_to_secs),
+        html: None,
+        formatted: None,
+        source: None,
+        media_data_url: None,
+        media_mime: None,
+        preview_message: Some(message.to_string()),
+        frontmatter: None,
+        frontmatter_error: None,
+        outgoing_links: Vec::new(),
+        backlinks: Vec::new(),
+        can_edit_source: false,
+        can_open_system: true,
+        error: None,
+    }
+}
+
+fn vault_item_error(file: &FileRow, path: &Path, message: String) -> VaultItemView {
+    let mut item = vault_item_preview(file, path, "This file could not be previewed.");
+    item.error = Some(message);
+    item
+}
+
+fn open_image_item(file: &FileRow, path: &Path) -> VaultItemView {
+    let Some(mime) = mime_for_path(path) else {
+        return vault_item_error(file, path, "Unsupported image type".to_string());
+    };
+    match fs::read(path) {
+        Ok(bytes) => {
+            let mut item = vault_item_preview(file, path, "Image preview");
+            item.media_mime = Some(mime.to_string());
+            item.media_data_url = Some(format!(
+                "data:{};base64,{}",
+                mime,
+                general_purpose::STANDARD.encode(bytes)
+            ));
+            item.preview_message = None;
+            item
+        }
+        Err(error) => vault_item_error(file, path, format!("Could not read image: {error}")),
+    }
+}
+
+fn open_generic_item(file: &FileRow, path: &Path) -> VaultItemView {
+    if file.size_bytes <= 512_000 {
+        if let Ok(source) = fs::read_to_string(path) {
+            let mut item = vault_item_preview(file, path, "Text preview");
+            item.source = Some(source.clone());
+            item.formatted = Some(source);
+            item.preview_message = None;
+            return item;
+        }
+    }
+    vault_item_preview(
+        file,
+        path,
+        "No inline preview is available for this file type.",
+    )
+}
+
+fn format_structured_source(source: &str, extension: &str) -> std::result::Result<String, String> {
+    match extension {
+        "json" => serde_json::from_str::<serde_json::Value>(source)
+            .and_then(|value| serde_json::to_string_pretty(&value))
+            .map_err(|error| format!("JSON parse issue: {error}\n\n{source}")),
+        "jsonl" => format_jsonl_source(source),
+        "yaml" | "yml" => serde_yaml::from_str::<serde_yaml::Value>(source)
+            .map_err(|error| format!("YAML parse issue: {error}\n\n{source}"))
+            .and_then(|value| {
+                serde_json::to_string_pretty(
+                    &serde_json::to_value(value)
+                        .map_err(|error| format!("YAML conversion issue: {error}"))?,
+                )
+                .map_err(|error| format!("YAML formatting issue: {error}\n\n{source}"))
+            }),
+        _ => Ok(source.to_string()),
+    }
+}
+
+fn format_jsonl_source(source: &str) -> std::result::Result<String, String> {
+    let mut values = Vec::new();
+    for (index, line) in source.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let value = serde_json::from_str::<serde_json::Value>(trimmed).map_err(|error| {
+            format!(
+                "JSONL parse issue on line {}: {error}\n\n{source}",
+                index + 1
+            )
+        })?;
+        values.push(value);
+    }
+    serde_json::to_string_pretty(&values)
+        .map_err(|error| format!("JSONL formatting issue: {error}\n\n{source}"))
+}
+
 fn collect_strings(conn: &Connection, sql: &str, value: &str) -> Result<Vec<String>> {
     let mut statement = conn.prepare(sql)?;
     let rows = statement.query_map([value], |row| row.get::<_, String>(0))?;
@@ -1606,19 +1999,15 @@ fn collect_strings(conn: &Connection, sql: &str, value: &str) -> Result<Vec<Stri
         .map_err(Into::into)
 }
 
-fn file_browser_item(
-    id: i64,
-    slug: String,
-    title: String,
-    filename: String,
-    path: &Path,
-    relative_path: String,
-) -> FileBrowserItem {
-    let metadata = fs::metadata(path).ok();
-    let modified_at = metadata
-        .as_ref()
-        .and_then(|metadata| metadata.modified().ok())
-        .and_then(system_time_seconds);
+fn file_browser_item(row: BrowserFileRow) -> FileBrowserItem {
+    let metadata = fs::metadata(&row.path).ok();
+    let filename = filename_for(&row.path);
+    let modified_at = row.modified_ns.and_then(nanos_to_secs).or_else(|| {
+        metadata
+            .as_ref()
+            .and_then(|metadata| metadata.modified().ok())
+            .and_then(system_time_seconds)
+    });
     let created_at = metadata
         .as_ref()
         .and_then(|metadata| metadata.created().ok())
@@ -1626,11 +2015,15 @@ fn file_browser_item(
         .or_else(|| timestamp_from_filename(&filename));
 
     FileBrowserItem {
-        id,
-        slug,
-        title,
+        id: row.id,
+        document_id: row.id,
+        slug: row.slug,
+        title: row.title.unwrap_or_else(|| fallback_title(&row.path)),
         filename,
-        relative_path,
+        relative_path: row.relative_path,
+        kind: row.kind,
+        extension: row.extension,
+        size_bytes: row.size_bytes,
         modified_at,
         created_at,
     }
@@ -1671,6 +2064,9 @@ fn daily_note_entries(files: &[FileBrowserItem]) -> Vec<DailyNoteEntry> {
     let mut entries = files
         .iter()
         .filter_map(|file| {
+            if file.kind != "markdown" {
+                return None;
+            }
             let date = daily_note_date(&file.filename, &file.relative_path)?;
             Some(DailyNoteEntry {
                 date,
@@ -1707,6 +2103,10 @@ fn system_time_nanos(time: std::time::SystemTime) -> Option<i64> {
     i64::try_from(nanos).ok()
 }
 
+fn nanos_to_secs(nanos: i64) -> Option<u64> {
+    u64::try_from(nanos / 1_000_000_000).ok()
+}
+
 fn unix_timestamp() -> i64 {
     std::time::SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1727,6 +2127,19 @@ fn timestamp_from_filename(filename: &str) -> Option<u64> {
     } else {
         None
     }
+}
+
+fn format_file_snippet(
+    relative_path: &str,
+    kind: &str,
+    size_bytes: i64,
+    modified_ns: Option<i64>,
+) -> String {
+    let modified = modified_ns
+        .and_then(nanos_to_secs)
+        .map(|value| format!(" · modified {value}"))
+        .unwrap_or_default();
+    format!("{kind} · {size_bytes} bytes · {relative_path}{modified}")
 }
 
 fn snippet_for(body: &str) -> String {

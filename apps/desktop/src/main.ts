@@ -19,38 +19,57 @@ type IndexSummary = {
 type FrontmatterValue = null | string | number | boolean | FrontmatterValue[] | { [key: string]: FrontmatterValue };
 
 type SearchHit = {
-  id: number;
+  id: number | null;
   slug: string;
   title: string;
   filename: string;
   stem: string;
   path: string;
   relative_path: string;
+  kind: string;
+  extension: string;
+  size_bytes: number;
   snippet: string;
   score: number;
 };
 
-type DocumentView = {
-  id: number;
+type VaultItemView = {
+  document_id: number | null;
   slug: string;
   title: string;
   filename: string;
   stem: string;
   path: string;
   relative_path: string;
-  html: string;
+  kind: string;
+  extension: string;
+  size_bytes: number;
+  modified_at: number | null;
+  html: string | null;
+  formatted: string | null;
+  source: string | null;
+  media_data_url: string | null;
+  media_mime: string | null;
+  preview_message: string | null;
   frontmatter: Record<string, FrontmatterValue> | null;
   frontmatter_error: string | null;
   outgoing_links: string[];
   backlinks: string[];
+  can_edit_source: boolean;
+  can_open_system: boolean;
+  error: string | null;
 };
 
 type FileBrowserItem = {
-  id: number;
+  id: number | null;
+  document_id: number | null;
   slug: string;
   title: string;
   filename: string;
   relative_path: string;
+  kind: string;
+  extension: string;
+  size_bytes: number;
   modified_at: number | null;
   created_at: number | null;
 };
@@ -63,7 +82,7 @@ type FolderEntry = {
 
 type DailyNoteEntry = {
   date: string;
-  id: number;
+  id: number | null;
   filename: string;
   relative_path: string;
 };
@@ -77,7 +96,7 @@ type FileBrowserSnapshot = {
 
 type IndexSnapshot = {
   stats: VaultStats;
-  first_document: DocumentView | null;
+  first_item: VaultItemView | null;
   index_summary: IndexSummary;
 };
 
@@ -93,7 +112,7 @@ type WatchStatus = {
 
 type SaveSnapshot = {
   stats: VaultStats;
-  document: DocumentView;
+  item: VaultItemView;
 };
 
 type AppMode = "setup" | "indexing" | "ready" | "error";
@@ -113,7 +132,7 @@ if (!app) {
 
 const appRoot = app;
 
-let currentDocument: DocumentView | null = null;
+let currentDocument: VaultItemView | null = null;
 let currentStats: VaultStats | null = null;
 let searchResults: SearchHit[] = [];
 let fileBrowserSnapshot: FileBrowserSnapshot | null = null;
@@ -124,8 +143,8 @@ let vaultPath = "";
 let appMode: AppMode = "setup";
 let showVaultSetup = true;
 let lastError = "";
-let backStack: number[] = [];
-let forwardStack: number[] = [];
+let backStack: string[] = [];
+let forwardStack: string[] = [];
 let currentSearchQuery = "";
 let isRefreshing = false;
 let isEditing = false;
@@ -178,8 +197,13 @@ function render() {
           <div class="document-actions">
             <div class="document-action-row">
               ${
-                currentDocument
+                currentDocument?.can_edit_source
                   ? `<button id="edit-toggle-button" class="secondary-button edit-toggle-button ${isEditing ? "is-active" : ""}" type="button" ${isSaving ? "disabled" : ""}>${isEditing ? "Read" : "Edit"}</button>`
+                  : ""
+              }
+              ${
+                currentDocument?.can_open_system
+                  ? `<button id="open-system-button" class="secondary-button" type="button" ${isSaving ? "disabled" : ""}>Open</button>`
                   : ""
               }
               <div class="nav-buttons" aria-label="Document navigation">
@@ -191,8 +215,9 @@ function render() {
           </div>
         </header>
 
-        ${currentDocument ? renderMetadataPanel(currentDocument) : ""}
-        ${currentDocument ? renderLinkPanel(currentDocument) : ""}
+        ${currentDocument ? renderItemDetailsPanel(currentDocument) : ""}
+        ${currentDocument && isMarkdownItem(currentDocument) ? renderMetadataPanel(currentDocument) : ""}
+        ${currentDocument && isMarkdownItem(currentDocument) ? renderLinkPanel(currentDocument) : ""}
 
         <article class="document-body ${isEditing ? "is-editing" : ""}">
           ${renderDocumentContent()}
@@ -204,7 +229,26 @@ function render() {
   bindEvents();
 }
 
-function renderMetadataPanel(document: DocumentView) {
+function renderItemDetailsPanel(item: VaultItemView) {
+  return `
+    <details class="metadata-panel item-details-panel">
+      <summary>
+        <span>Item</span>
+        <small>${escapeHtml(item.kind)} · ${escapeHtml(formatBytes(item.size_bytes))}</small>
+      </summary>
+      <dl>
+        ${renderMetadataRow("kind", item.kind)}
+        ${renderMetadataRow("extension", item.extension || "none")}
+        ${renderMetadataRow("size", formatBytes(item.size_bytes))}
+        ${renderMetadataRow("modified", item.modified_at ? formatDateTime(item.modified_at) : "unknown")}
+        ${renderMetadataRow("relative_path", item.relative_path)}
+        ${renderMetadataRow("source_path", item.path)}
+      </dl>
+    </details>
+  `;
+}
+
+function renderMetadataPanel(document: VaultItemView) {
   return `
     <details class="metadata-panel">
       <summary>
@@ -218,7 +262,7 @@ function renderMetadataPanel(document: DocumentView) {
   `;
 }
 
-function renderLinkPanel(document: DocumentView) {
+function renderLinkPanel(document: VaultItemView) {
   const backlinks = document.backlinks.length;
   const outgoing = document.outgoing_links.length;
   return `
@@ -245,8 +289,24 @@ function renderDocumentContent() {
   if (!currentDocument) {
     return `<div class="empty-state"><h3>Start with the fixture vault</h3><p>The MVP indexes local Markdown, stores graph metadata in SQLite, and searches body text with Tantivy.</p></div>`;
   }
-  if (!isEditing) {
+  if (currentDocument.error) {
+    return renderPreviewState("Preview error", currentDocument.error, currentDocument.can_open_system);
+  }
+  if (!isEditing && currentDocument.html) {
     return currentDocument.html;
+  }
+  if (!isEditing && currentDocument.media_data_url) {
+    return `<img class="vault-image item-image-preview" src="${escapeAttribute(currentDocument.media_data_url)}" alt="${escapeAttribute(currentDocument.filename)}" />`;
+  }
+  if (!isEditing && currentDocument.formatted !== null) {
+    return renderStructuredInspector(currentDocument);
+  }
+  if (!isEditing) {
+    return renderPreviewState(
+      currentDocument.preview_message ?? "No inline preview is available for this file.",
+      `${currentDocument.filename} can still be opened from the source file.`,
+      currentDocument.can_open_system,
+    );
   }
 
   return `
@@ -264,7 +324,30 @@ function renderDocumentContent() {
   `;
 }
 
-function metadataSummary(document: DocumentView) {
+function renderStructuredInspector(item: VaultItemView) {
+  return `
+    <section class="structured-inspector" aria-label="Structured file inspector">
+      <pre><code>${escapeHtml(item.formatted ?? "")}</code></pre>
+      ${
+        item.source !== null
+          ? `<details class="raw-source-panel"><summary>Raw source</summary><pre><code>${escapeHtml(item.source)}</code></pre></details>`
+          : ""
+      }
+    </section>
+  `;
+}
+
+function renderPreviewState(title: string, body: string, canOpenSystem: boolean) {
+  return `
+    <div class="empty-state file-preview-state">
+      <h3>${escapeHtml(title)}</h3>
+      <p>${escapeHtml(body)}</p>
+      ${canOpenSystem ? `<button id="open-system-inline-button" type="button">Open in system</button>` : ""}
+    </div>
+  `;
+}
+
+function metadataSummary(document: VaultItemView) {
   if (document.frontmatter_error) {
     return "parse issue";
   }
@@ -275,7 +358,7 @@ function metadataSummary(document: DocumentView) {
   return `${Object.keys(document.frontmatter).length} fields`;
 }
 
-function renderMetadataRows(document: DocumentView) {
+function renderMetadataRows(document: VaultItemView) {
   if (document.frontmatter_error) {
     return renderMetadataRow("error", document.frontmatter_error);
   }
@@ -318,11 +401,11 @@ function formatFrontmatterValue(value: FrontmatterValue): string {
 
 function renderSearchHit(hit: SearchHit) {
   return `
-    <button class="result" type="button" data-doc-id="${hit.id}">
+    <button class="result" type="button" data-relative-path="${escapeAttribute(hit.relative_path)}">
       <strong title="${escapeAttribute(hit.filename)}">${escapeHtml(hit.filename)}</strong>
       <em title="${escapeAttribute(hit.relative_path)}">${escapeHtml(hit.relative_path)}</em>
       <span>${escapeHtml(hit.snippet)}</span>
-      <small>${escapeHtml(hit.title)} · ${escapeHtml(hit.slug)} · ${formatScore.format(hit.score)}</small>
+      <small>${escapeHtml(hit.kind)} · ${escapeHtml(hit.title)} · ${formatScore.format(hit.score)}</small>
     </button>
   `;
 }
@@ -360,7 +443,7 @@ function renderCalendarDay(day: CalendarDay, dailyNote: DailyNoteEntry | undefin
     .join(" ");
 
   return `
-    <button class="${classes}" type="button" data-calendar-date="${day.key}" ${dailyNote ? `data-doc-id="${dailyNote.id}"` : ""}>
+    <button class="${classes}" type="button" data-calendar-date="${day.key}" ${dailyNote ? `data-relative-path="${escapeAttribute(dailyNote.relative_path)}"` : ""}>
       <span>${day.date.getDate()}</span>
       ${dailyNote ? `<i aria-hidden="true"></i>` : ""}
     </button>
@@ -433,9 +516,9 @@ function renderFolderEntry(folder: FolderEntry) {
 
 function renderFileItem(file: FileBrowserItem) {
   return `
-    <button class="file-item" type="button" data-doc-id="${file.id}" title="${escapeAttribute(file.relative_path)}">
+    <button class="file-item" type="button" data-relative-path="${escapeAttribute(file.relative_path)}" title="${escapeAttribute(file.relative_path)}">
       <strong>${escapeHtml(file.filename)}</strong>
-      <span>${escapeHtml(file.relative_path)}</span>
+      <span>${escapeHtml(file.kind)} · ${escapeHtml(file.relative_path)}</span>
     </button>
   `;
 }
@@ -489,6 +572,12 @@ function bindEvents() {
     }
     void enterEditMode();
   });
+  document.querySelector<HTMLButtonElement>("#open-system-button")?.addEventListener("click", () => {
+    void openCurrentItemInSystem();
+  });
+  document.querySelector<HTMLButtonElement>("#open-system-inline-button")?.addEventListener("click", () => {
+    void openCurrentItemInSystem();
+  });
   document.querySelector<HTMLTextAreaElement>("#note-editor")?.addEventListener("input", (event) => {
     editSource = (event.target as HTMLTextAreaElement).value;
   });
@@ -533,9 +622,9 @@ function bindEvents() {
   });
   document.querySelectorAll<HTMLButtonElement>("[data-calendar-date]").forEach((button) => {
     button.addEventListener("click", () => {
-      const id = Number(button.dataset.docId);
-      if (Number.isFinite(id)) {
-        void openDocumentById(id);
+      const relativePath = button.dataset.relativePath;
+      if (relativePath) {
+        void openItemByPath(relativePath);
         return;
       }
       statusText = `No daily note for ${button.dataset.calendarDate}`;
@@ -559,14 +648,14 @@ function bindEvents() {
       }
     });
   });
-  document.querySelectorAll<HTMLButtonElement>("[data-doc-id]").forEach((button) => {
+  document.querySelectorAll<HTMLButtonElement>("[data-relative-path]").forEach((button) => {
     button.addEventListener("click", () => {
       if (button.dataset.calendarDate) {
         return;
       }
-      const id = Number(button.dataset.docId);
-      if (Number.isFinite(id)) {
-        void openDocumentById(id);
+      const relativePath = button.dataset.relativePath;
+      if (relativePath) {
+        void openItemByPath(relativePath);
       }
     });
   });
@@ -598,7 +687,7 @@ async function indexVault() {
     render();
     const snapshot = await invoke<IndexSnapshot>("index_vault", { vaultPath });
     currentStats = snapshot.stats;
-    currentDocument = snapshot.first_document;
+    currentDocument = snapshot.first_item;
     fileBrowserSnapshot = await invoke<FileBrowserSnapshot>("file_browser");
     resetEditState();
     backStack = [];
@@ -633,7 +722,7 @@ async function resetIndex() {
 
     const snapshot = await invoke<IndexSnapshot>("reset_index", { vaultPath });
     currentStats = snapshot.stats;
-    currentDocument = snapshot.first_document;
+    currentDocument = snapshot.first_item;
     fileBrowserSnapshot = await invoke<FileBrowserSnapshot>("file_browser");
     resetEditState();
     backStack = [];
@@ -736,7 +825,7 @@ async function refreshIndexInBackground(reason: "timer" | "focus" | "watcher" = 
     lastRefreshAt = new Date();
 
     if (openPath) {
-      currentDocument = await invoke<DocumentView>("open_document_by_path", { relativePath: openPath });
+      currentDocument = await invoke<VaultItemView>("open_item_by_path", { relativePath: openPath });
     }
     if (currentSearchQuery) {
       searchResults = await invoke<SearchHit[]>("search", { query: currentSearchQuery });
@@ -770,7 +859,7 @@ async function runSearch(query: string) {
 
 async function openDocument(slug: string, recordHistory = true) {
   try {
-    const document = await invoke<DocumentView>("open_document", { slug });
+    const document = await invoke<VaultItemView>("open_document", { slug });
     applyOpenedDocument(document, `Opened ${document.filename}`, recordHistory);
   } catch (error) {
     statusText = String(error);
@@ -778,10 +867,23 @@ async function openDocument(slug: string, recordHistory = true) {
   render();
 }
 
-async function openDocumentById(id: number, recordHistory = true) {
+async function openItemByPath(relativePath: string, recordHistory = true) {
   try {
-    const document = await invoke<DocumentView>("open_document_by_id", { id });
-    applyOpenedDocument(document, `Opened ${document.filename}`, recordHistory);
+    const item = await invoke<VaultItemView>("open_item_by_path", { relativePath });
+    applyOpenedDocument(item, `Opened ${item.filename}`, recordHistory);
+  } catch (error) {
+    statusText = String(error);
+  }
+  render();
+}
+
+async function openCurrentItemInSystem() {
+  if (!currentDocument) {
+    return;
+  }
+  try {
+    await invoke<void>("open_item_in_system", { relativePath: currentDocument.relative_path });
+    statusText = `Opened ${currentDocument.filename} in system`;
   } catch (error) {
     statusText = String(error);
   }
@@ -836,7 +938,7 @@ async function saveEditMode() {
       source: editSource,
     });
     currentStats = snapshot.stats;
-    currentDocument = snapshot.document;
+    currentDocument = snapshot.item;
     fileBrowserSnapshot = await invoke<FileBrowserSnapshot>("file_browser");
     backStack = [];
     forwardStack = [];
@@ -858,10 +960,10 @@ async function navigateBack() {
     return;
   }
 
-  const id = backStack.pop();
-  forwardStack.push(currentDocument.id);
-  if (id !== undefined) {
-    await openDocumentById(id, false);
+  const relativePath = backStack.pop();
+  forwardStack.push(currentDocument.relative_path);
+  if (relativePath !== undefined) {
+    await openItemByPath(relativePath, false);
   }
 }
 
@@ -870,16 +972,16 @@ async function navigateForward() {
     return;
   }
 
-  const id = forwardStack.pop();
-  backStack.push(currentDocument.id);
-  if (id !== undefined) {
-    await openDocumentById(id, false);
+  const relativePath = forwardStack.pop();
+  backStack.push(currentDocument.relative_path);
+  if (relativePath !== undefined) {
+    await openItemByPath(relativePath, false);
   }
 }
 
-function applyOpenedDocument(document: DocumentView, status: string, recordHistory: boolean) {
-  if (recordHistory && currentDocument && currentDocument.id !== document.id) {
-    backStack.push(currentDocument.id);
+function applyOpenedDocument(document: VaultItemView, status: string, recordHistory: boolean) {
+  if (recordHistory && currentDocument && currentDocument.relative_path !== document.relative_path) {
+    backStack.push(currentDocument.relative_path);
     forwardStack = [];
   }
 
@@ -979,6 +1081,31 @@ function formatRefreshTime(date: Date) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function formatDateTime(timestampSeconds: number) {
+  return new Date(timestampSeconds * 1000).toLocaleString([], {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = bytes / 1024;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+function isMarkdownItem(item: VaultItemView) {
+  return item.kind === "markdown";
 }
 
 function dailyNotesByDate() {

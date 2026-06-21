@@ -7,9 +7,9 @@ Mega Vault Viewer is a local-first, read-first macOS vault viewer for large mixe
 - Rust core crate: `crates/mvv-core`
 - Desktop shell: `apps/desktop` using Tauri v2
 - Fixture vault: `fixtures/demo-vault`
-- SQLite shadow cache: document metadata, paths, links and backlinks
-- Tantivy shadow cache: title/body/slug full-text search
-- UI flow: choose vault path, index, search, open notes, follow WikiLinks
+- SQLite shadow cache: file manifest, document metadata, paths, links and backlinks
+- Tantivy shadow cache: Markdown title/body/slug full-text search, with manifest-backed file search by path/name
+- UI flow: choose vault path, index, search, open Markdown/YAML/JSON/JSONL/images/PDFs/generic files, follow WikiLinks
 
 ## Runtime State
 
@@ -25,7 +25,7 @@ npm run desktop:dev
 ```
 
 The app defaults to `/Users/viggomeesters/Library/Mobile Documents/iCloud~md~obsidian/Documents/vault`.
-Replace the path with any local folder containing `.md` files when needed.
+Replace the path with any local folder containing Markdown notes or other vault files when needed.
 
 ## Build macOS App
 
@@ -33,7 +33,7 @@ Replace the path with any local folder containing `.md` files when needed.
 npm run desktop:build
 ```
 
-The generated `.app` bundle is written under `apps/desktop/src-tauri/target/release/bundle/macos/`.
+The generated `.app` bundle is written under `target/release/bundle/macos/`.
 
 ## Verify
 

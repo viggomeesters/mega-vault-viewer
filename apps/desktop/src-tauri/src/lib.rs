@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use mvv_core::{
-    DocumentView, FileBrowserSnapshot, IndexSummary, SearchHit, VaultRuntime, VaultStats,
+    FileBrowserSnapshot, IndexSummary, SearchHit, VaultItemView, VaultRuntime, VaultStats,
 };
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
@@ -26,7 +26,7 @@ struct VaultWatcher {
 #[derive(Debug, Serialize)]
 struct IndexSnapshot {
     stats: VaultStats,
-    first_document: Option<DocumentView>,
+    first_item: Option<VaultItemView>,
     index_summary: IndexSummary,
 }
 
@@ -39,7 +39,7 @@ struct RefreshSnapshot {
 #[derive(Debug, Serialize)]
 struct SaveSnapshot {
     stats: VaultStats,
-    document: DocumentView,
+    item: VaultItemView,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -68,21 +68,21 @@ async fn index_vault(
     let snapshot = tauri::async_runtime::spawn_blocking(move || {
         let runtime = VaultRuntime::build(&vault_path, state_dir)?;
         let stats = runtime.stats()?;
-        let first_document = runtime.first_document()?;
+        let first_item = runtime.first_item()?;
         let index_summary = runtime.index_summary();
 
-        Ok::<_, anyhow::Error>((runtime, stats, first_document, index_summary))
+        Ok::<_, anyhow::Error>((runtime, stats, first_item, index_summary))
     })
     .await
     .map_err(|error| error.to_string())?
     .map_err(|error| error.to_string())?;
 
-    let (runtime, stats, first_document, index_summary) = snapshot;
+    let (runtime, stats, first_item, index_summary) = snapshot;
 
     *state.runtime.lock().map_err(|_| "runtime lock poisoned")? = Some(runtime);
     Ok(IndexSnapshot {
         stats,
-        first_document,
+        first_item,
         index_summary,
     })
 }
@@ -98,21 +98,21 @@ async fn reset_index(
         VaultRuntime::reset_runtime_state(&state_dir)?;
         let runtime = VaultRuntime::build(&vault_path, state_dir)?;
         let stats = runtime.stats()?;
-        let first_document = runtime.first_document()?;
+        let first_item = runtime.first_item()?;
         let index_summary = runtime.index_summary();
 
-        Ok::<_, anyhow::Error>((runtime, stats, first_document, index_summary))
+        Ok::<_, anyhow::Error>((runtime, stats, first_item, index_summary))
     })
     .await
     .map_err(|error| error.to_string())?
     .map_err(|error| error.to_string())?;
 
-    let (runtime, stats, first_document, index_summary) = snapshot;
+    let (runtime, stats, first_item, index_summary) = snapshot;
 
     *state.runtime.lock().map_err(|_| "runtime lock poisoned")? = Some(runtime);
     Ok(IndexSnapshot {
         stats,
-        first_document,
+        first_item,
         index_summary,
     })
 }
@@ -190,37 +190,63 @@ fn search(state: State<'_, AppState>, query: String) -> Result<Vec<SearchHit>, S
 }
 
 #[tauri::command]
-fn open_document(state: State<'_, AppState>, slug: String) -> Result<DocumentView, String> {
+fn open_document(state: State<'_, AppState>, slug: String) -> Result<VaultItemView, String> {
     let guard = state.runtime.lock().map_err(|_| "runtime lock poisoned")?;
     let runtime = guard
         .as_ref()
         .ok_or_else(|| "Open a vault before opening notes".to_string())?;
     runtime
-        .open_by_slug(&slug)
+        .open_item_by_slug(&slug)
         .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-fn open_document_by_id(state: State<'_, AppState>, id: i64) -> Result<DocumentView, String> {
+fn open_document_by_id(state: State<'_, AppState>, id: i64) -> Result<VaultItemView, String> {
     let guard = state.runtime.lock().map_err(|_| "runtime lock poisoned")?;
     let runtime = guard
         .as_ref()
         .ok_or_else(|| "Open a vault before opening notes".to_string())?;
-    runtime.open_by_id(id).map_err(|error| error.to_string())
+    runtime
+        .open_item_by_id(id)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 fn open_document_by_path(
     state: State<'_, AppState>,
     relative_path: String,
-) -> Result<DocumentView, String> {
+) -> Result<VaultItemView, String> {
     let guard = state.runtime.lock().map_err(|_| "runtime lock poisoned")?;
     let runtime = guard
         .as_ref()
         .ok_or_else(|| "Open a vault before opening notes".to_string())?;
     runtime
-        .open_by_relative_path(&relative_path)
+        .open_item_by_relative_path(&relative_path)
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn open_item_by_path(
+    state: State<'_, AppState>,
+    relative_path: String,
+) -> Result<VaultItemView, String> {
+    open_document_by_path(state, relative_path)
+}
+
+#[tauri::command]
+fn open_item_in_system(state: State<'_, AppState>, relative_path: String) -> Result<(), String> {
+    let guard = state.runtime.lock().map_err(|_| "runtime lock poisoned")?;
+    let runtime = guard
+        .as_ref()
+        .ok_or_else(|| "Open a vault before opening files".to_string())?;
+    let item = runtime
+        .open_item_by_relative_path(&relative_path)
+        .map_err(|error| error.to_string())?;
+    std::process::Command::new("open")
+        .arg(&item.path)
+        .spawn()
+        .map_err(|error| format!("open in system failed: {error}"))?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -268,17 +294,17 @@ async fn save_document_source(
     let snapshot = tauri::async_runtime::spawn_blocking(move || {
         let runtime = VaultRuntime::build(&vault_path, state_dir)?;
         let stats = runtime.stats()?;
-        let document = runtime.open_by_relative_path(&relative_path)?;
+        let item = runtime.open_item_by_relative_path(&relative_path)?;
 
-        Ok::<_, anyhow::Error>((runtime, stats, document))
+        Ok::<_, anyhow::Error>((runtime, stats, item))
     })
     .await
     .map_err(|error| error.to_string())?
     .map_err(|error| error.to_string())?;
 
-    let (runtime, stats, document) = snapshot;
+    let (runtime, stats, item) = snapshot;
     *state.runtime.lock().map_err(|_| "runtime lock poisoned")? = Some(runtime);
-    Ok(SaveSnapshot { stats, document })
+    Ok(SaveSnapshot { stats, item })
 }
 
 fn runtime_state_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -337,6 +363,8 @@ pub fn run() {
             open_document,
             open_document_by_id,
             open_document_by_path,
+            open_item_by_path,
+            open_item_in_system,
             file_browser,
             read_document_source,
             save_document_source

@@ -437,7 +437,7 @@ Same slug in two source paths.
     assert_eq!(hits.len(), 2);
     assert_ne!(hits[0].relative_path, hits[1].relative_path);
 
-    let opened = runtime.open_by_id(hits[0].id).unwrap();
+    let opened = runtime.open_by_id(hits[0].id.unwrap()).unwrap();
     assert_eq!(opened.slug, "duplicate-note");
     assert_eq!(opened.relative_path, hits[0].relative_path);
 }
@@ -553,4 +553,122 @@ fn reader_fixture_pins_markdown_and_obsidian_rendering_semantics() {
     assert!(edge
         .html
         .contains("Malformed frontmatter should be reported"));
+}
+
+#[test]
+fn opens_mixed_format_vault_items_without_rewriting_sources() {
+    let temp = tempfile::tempdir().unwrap();
+    let vault = temp.path().join("vault");
+    fs::create_dir_all(vault.join("10_notes")).unwrap();
+    fs::create_dir_all(vault.join("system")).unwrap();
+    fs::create_dir_all(vault.join("30_media")).unwrap();
+    fs::create_dir_all(vault.join("20_files")).unwrap();
+
+    fs::write(
+        vault.join("10_notes/mixed.md"),
+        r#"---
+title: Mixed Markdown
+slug: mixed-markdown
+---
+
+# Mixed Markdown
+
+Markdown body.
+"#,
+    )
+    .unwrap();
+    fs::write(
+        vault.join("system/settings.yaml"),
+        "name: Mega\nflags:\n  - reader\n",
+    )
+    .unwrap();
+    fs::write(
+        vault.join("system/state.json"),
+        r#"{"name":"Mega","count":2}"#,
+    )
+    .unwrap();
+    fs::write(
+        vault.join("system/events.jsonl"),
+        "{\"event\":\"open\"}\n{\"event\":\"preview\"}\n",
+    )
+    .unwrap();
+    fs::write(vault.join("30_media/pixel.png"), [0x89, b'P', b'N', b'G']).unwrap();
+    fs::write(vault.join("20_files/sample.pdf"), b"%PDF-1.4\n").unwrap();
+    fs::write(vault.join("20_files/readme.bin"), b"plain fallback").unwrap();
+
+    let runtime = VaultRuntime::build(&vault, temp.path().join("state")).unwrap();
+    let browser = runtime.file_browser().unwrap();
+    assert!(browser
+        .newest_files
+        .iter()
+        .any(|file| file.relative_path == "system/settings.yaml" && file.kind == "yaml"));
+    assert!(browser
+        .folders
+        .iter()
+        .any(|folder| folder.path == "system" && folder.document_count == 3));
+
+    let markdown = runtime
+        .open_item_by_relative_path("10_notes/mixed.md")
+        .unwrap();
+    assert_eq!(markdown.kind, "markdown");
+    assert_eq!(markdown.slug, "mixed-markdown");
+    assert_eq!(markdown.document_id, Some(1));
+    assert!(markdown.html.unwrap().contains("<h1>Mixed Markdown</h1>"));
+    assert!(markdown.can_edit_source);
+
+    let yaml = runtime
+        .open_item_by_relative_path("system/settings.yaml")
+        .unwrap();
+    assert_eq!(yaml.kind, "yaml");
+    assert!(yaml.source.as_ref().unwrap().contains("name: Mega"));
+    assert!(yaml
+        .formatted
+        .as_ref()
+        .unwrap()
+        .contains("\"name\": \"Mega\""));
+    assert!(!yaml.can_edit_source);
+
+    let json = runtime
+        .open_item_by_relative_path("system/state.json")
+        .unwrap();
+    assert_eq!(json.kind, "json");
+    assert!(json.formatted.as_ref().unwrap().contains("\"count\": 2"));
+
+    let jsonl = runtime
+        .open_item_by_relative_path("system/events.jsonl")
+        .unwrap();
+    assert_eq!(jsonl.extension, "jsonl");
+    assert!(jsonl
+        .formatted
+        .as_ref()
+        .unwrap()
+        .contains("\"event\": \"preview\""));
+
+    let image = runtime
+        .open_item_by_relative_path("30_media/pixel.png")
+        .unwrap();
+    assert_eq!(image.kind, "image");
+    assert!(image
+        .media_data_url
+        .as_ref()
+        .unwrap()
+        .starts_with("data:image/png;base64,"));
+
+    let pdf = runtime
+        .open_item_by_relative_path("20_files/sample.pdf")
+        .unwrap();
+    assert_eq!(pdf.kind, "pdf");
+    assert!(pdf.preview_message.unwrap().contains("PDF preview"));
+    assert!(pdf.can_open_system);
+
+    let generic = runtime
+        .open_item_by_relative_path("20_files/readme.bin")
+        .unwrap();
+    assert_eq!(generic.kind, "file");
+    assert_eq!(generic.source.as_deref(), Some("plain fallback"));
+
+    let hits = runtime.search("settings.yaml", 10).unwrap();
+    assert!(hits
+        .iter()
+        .any(|hit| hit.relative_path == "system/settings.yaml" && hit.kind == "yaml"));
 }
