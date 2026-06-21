@@ -376,7 +376,7 @@ function renderFileTab(mode: FileViewMode, label: string) {
 
 function renderFileViewContent() {
   if (!fileBrowserSnapshot) {
-    return `<p class="empty">Index a vault to browse files.</p>`;
+    return `<p class="empty">Open a vault to browse files.</p>`;
   }
   if (fileViewMode === "folders") {
     return `
@@ -441,10 +441,10 @@ function renderVaultSetup() {
       </label>
 
       <button id="index-button" type="button" ${appMode === "indexing" ? "disabled" : ""}>
-        ${appMode === "indexing" ? "Indexing..." : currentStats ? "Reindex vault" : "Index vault"}
+        ${appMode === "indexing" ? "Syncing..." : currentStats ? "Sync vault" : "Open vault"}
       </button>
 
-      ${appMode === "indexing" ? `<div class="busy-state" role="status"><span class="spinner" aria-hidden="true"></span><span>Indexing vault in background</span></div>` : ""}
+      ${appMode === "indexing" ? `<div class="busy-state" role="status"><span class="spinner" aria-hidden="true"></span><span>Syncing vault in background</span></div>` : ""}
       ${appMode === "error" ? `<p class="error-text">${escapeHtml(lastError)}</p>` : ""}
     </section>
   `;
@@ -564,7 +564,7 @@ async function indexVault() {
     stopAutoRefresh();
     appMode = "indexing";
     lastError = "";
-    statusText = "Indexing vault in background...";
+    statusText = "Syncing vault in background...";
     render();
     const snapshot = await invoke<IndexSnapshot>("index_vault", { vaultPath });
     currentStats = snapshot.stats;
@@ -573,7 +573,7 @@ async function indexVault() {
     resetEditState();
     backStack = [];
     forwardStack = [];
-    statusText = `Indexed ${snapshot.stats.documents} documents`;
+    statusText = `Synced ${snapshot.stats.documents} documents`;
     searchResults = [];
     currentSearchQuery = "";
     lastRefreshAt = new Date();
@@ -582,7 +582,7 @@ async function indexVault() {
     startAutoRefresh();
   } catch (error) {
     lastError = String(error);
-    statusText = "Index failed";
+    statusText = "Sync failed";
     appMode = "error";
     showVaultSetup = true;
   }
@@ -599,7 +599,7 @@ async function refreshIndexInBackground(reason: "timer" | "focus" = "timer") {
 
   const openPath = currentDocument?.relative_path ?? null;
   isRefreshing = true;
-  statusText = "Updating index in background...";
+  statusText = "Syncing changes in background...";
   render();
 
   try {
@@ -798,7 +798,7 @@ function formatVaultName(path: string) {
 
 function formatStats(stats: VaultStats | null) {
   if (!stats) {
-    return "Not indexed";
+    return "Not synced";
   }
 
   return `${stats.documents} docs, ${stats.links} links`;

@@ -109,6 +109,154 @@ slug: 20260619-0600-daily
 }
 
 #[test]
+fn runtime_state_uses_explicit_cache_dir_and_reset_never_touches_vault_files() {
+    let temp = tempfile::tempdir().unwrap();
+    let vault = temp.path().join("vault");
+    let state = temp.path().join("application-support-state");
+    fs::create_dir_all(&vault).unwrap();
+    fs::write(
+        vault.join("alpha.md"),
+        r#"---
+title: Alpha
+slug: alpha
+---
+
+# Alpha
+
+Canonical vault content.
+"#,
+    )
+    .unwrap();
+
+    let runtime = VaultRuntime::build(&vault, &state).unwrap();
+    assert_eq!(runtime.stats().unwrap().documents, 1);
+    assert!(state.join("mega-vault-viewer.sqlite").exists());
+    assert!(state.join("tantivy").exists());
+    assert!(!vault.join("mega-vault-viewer.sqlite").exists());
+    assert!(!vault.join("mega-vault-viewer.sqlite-wal").exists());
+    assert!(!vault.join("mega-vault-viewer.sqlite-shm").exists());
+    assert!(!vault.join("tantivy").exists());
+
+    fs::write(state.join("mega-vault-viewer.sqlite-wal"), "wal").unwrap();
+    fs::write(state.join("mega-vault-viewer.sqlite-shm"), "shm").unwrap();
+    fs::create_dir_all(state.join("render-cache")).unwrap();
+    fs::write(state.join("render-cache/thumb.bin"), "cache").unwrap();
+
+    VaultRuntime::reset_runtime_state(&state).unwrap();
+
+    assert!(vault.join("alpha.md").exists());
+    assert!(fs::read_to_string(vault.join("alpha.md"))
+        .unwrap()
+        .contains("Canonical vault content."));
+    assert!(!state.join("mega-vault-viewer.sqlite").exists());
+    assert!(!state.join("mega-vault-viewer.sqlite-wal").exists());
+    assert!(!state.join("mega-vault-viewer.sqlite-shm").exists());
+    assert!(!state.join("tantivy").exists());
+    assert!(!state.join("render-cache").exists());
+}
+
+#[test]
+fn incremental_reindex_preserves_existing_document_ids_and_adds_new_files() {
+    let temp = tempfile::tempdir().unwrap();
+    let vault = temp.path().join("vault");
+    fs::create_dir_all(&vault).unwrap();
+
+    fs::write(
+        vault.join("zeta.md"),
+        r#"---
+title: Zeta
+slug: zeta
+---
+
+# Zeta
+
+Existing searchable body.
+"#,
+    )
+    .unwrap();
+
+    let state = temp.path().join("state");
+    let runtime = VaultRuntime::build(&vault, &state).unwrap();
+    let zeta = runtime.open_by_slug("zeta").unwrap();
+    assert_eq!(runtime.stats().unwrap().documents, 1);
+
+    fs::write(
+        vault.join("alpha.md"),
+        r#"---
+title: Alpha
+slug: alpha
+---
+
+# Alpha
+
+New searchable body.
+"#,
+    )
+    .unwrap();
+
+    let runtime = VaultRuntime::build(&vault, &state).unwrap();
+    let zeta_after_reindex = runtime.open_by_slug("zeta").unwrap();
+    assert_eq!(zeta_after_reindex.id, zeta.id);
+    assert_eq!(runtime.stats().unwrap().documents, 2);
+
+    let hits = runtime.search("Alpha", 5).unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].slug, "alpha");
+}
+
+#[test]
+fn incremental_reindex_updates_changed_files_and_removes_deleted_files() {
+    let temp = tempfile::tempdir().unwrap();
+    let vault = temp.path().join("vault");
+    fs::create_dir_all(&vault).unwrap();
+    let note = vault.join("alpha.md");
+
+    fs::write(
+        &note,
+        r#"---
+title: Alpha
+slug: alpha
+---
+
+# Alpha
+
+BeforeOnly
+"#,
+    )
+    .unwrap();
+
+    let state = temp.path().join("state");
+    let runtime = VaultRuntime::build(&vault, &state).unwrap();
+    let alpha = runtime.open_by_slug("alpha").unwrap();
+    assert_eq!(runtime.search("BeforeOnly", 5).unwrap().len(), 1);
+
+    fs::write(
+        &note,
+        r#"---
+title: Alpha
+slug: alpha
+---
+
+# Alpha
+
+AfterOnly
+"#,
+    )
+    .unwrap();
+
+    let runtime = VaultRuntime::build(&vault, &state).unwrap();
+    assert_eq!(runtime.open_by_slug("alpha").unwrap().id, alpha.id);
+    assert_eq!(runtime.search("BeforeOnly", 5).unwrap().len(), 0);
+    assert_eq!(runtime.search("AfterOnly", 5).unwrap().len(), 1);
+
+    fs::remove_file(&note).unwrap();
+    let runtime = VaultRuntime::build(&vault, &state).unwrap();
+    assert_eq!(runtime.stats().unwrap().documents, 0);
+    assert_eq!(runtime.search("AfterOnly", 5).unwrap().len(), 0);
+    assert!(runtime.open_by_slug("alpha").is_err());
+}
+
+#[test]
 fn reads_and_writes_raw_document_source_by_relative_path() {
     let temp = tempfile::tempdir().unwrap();
     let vault = temp.path().join("vault");

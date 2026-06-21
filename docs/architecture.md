@@ -1,17 +1,19 @@
 # Architecture
 
-## Read-First Runtime
+## Vault-First Runtime
 
-The app treats source files and runtime indexes as separate layers.
+The app treats vault files and runtime indexes as separate layers.
 
-- **Source layer:** Markdown files on disk. Human-readable and portable.
+- **Canonical vault:** Markdown, YAML, JSON, media and other source files on disk. Human-readable, portable and inspectable outside Mega Viewer.
 - **Structured runtime:** SQLite stores document ids, slugs, source paths, frontmatter-derived metadata, outgoing links and backlink queries.
 - **Search runtime:** Tantivy stores full-text fields and shares SQLite document ids.
 - **UI shell:** Tauri exposes local Rust commands to a small desktop interface.
 
+SQLite, Tantivy, thumbnails and render caches are shadow state. They live outside the vault in the app state directory and can be deleted and rebuilt without changing the canonical files.
+
 ## Source Formats vs Runtime Model
 
-Markdown is the first source format because the existing vault and Obsidian ecosystem already use it. It is not the long-term runtime model. The runtime model is a canonical document record plus adapters:
+Markdown is the first source format because existing vaults and the Obsidian ecosystem already use it. It is not the long-term runtime model. The runtime model is a canonical document record plus adapters:
 
 ```text
 source file -> adapter -> canonical document -> SQLite graph/metadata + Tantivy text index -> UI/API

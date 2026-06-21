@@ -3,10 +3,11 @@ use std::sync::Mutex;
 
 use mvv_core::{DocumentView, FileBrowserSnapshot, SearchHit, VaultRuntime, VaultStats};
 use serde::Serialize;
-use tauri::State;
+use tauri::{Manager, State};
 
 const DEFAULT_VAULT_PATH: &str =
     "/Users/viggomeesters/Library/Mobile Documents/iCloud~md~obsidian/Documents/vault";
+const STATE_DIR_ENV: &str = "MEGA_VAULT_VIEWER_STATE_DIR";
 
 #[derive(Default)]
 struct AppState {
@@ -37,12 +38,11 @@ fn default_vault_path() -> String {
 
 #[tauri::command]
 async fn index_vault(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     vault_path: String,
 ) -> Result<IndexSnapshot, String> {
-    let state_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("target")
-        .join("mvv-state");
+    let state_dir = runtime_state_dir(&app)?;
     let snapshot = tauri::async_runtime::spawn_blocking(move || {
         let runtime = VaultRuntime::build(&vault_path, state_dir)?;
         let stats = runtime.stats()?;
@@ -65,12 +65,11 @@ async fn index_vault(
 
 #[tauri::command]
 async fn refresh_index(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     vault_path: String,
 ) -> Result<RefreshSnapshot, String> {
-    let state_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("target")
-        .join("mvv-state");
+    let state_dir = runtime_state_dir(&app)?;
     let snapshot = tauri::async_runtime::spawn_blocking(move || {
         let runtime = VaultRuntime::build(&vault_path, state_dir)?;
         let stats = runtime.stats()?;
@@ -92,7 +91,7 @@ fn search(state: State<'_, AppState>, query: String) -> Result<Vec<SearchHit>, S
     let guard = state.runtime.lock().map_err(|_| "runtime lock poisoned")?;
     let runtime = guard
         .as_ref()
-        .ok_or_else(|| "Index a vault before searching".to_string())?;
+        .ok_or_else(|| "Open a vault before searching".to_string())?;
     runtime
         .search(&query, 20)
         .map_err(|error| error.to_string())
@@ -103,7 +102,7 @@ fn open_document(state: State<'_, AppState>, slug: String) -> Result<DocumentVie
     let guard = state.runtime.lock().map_err(|_| "runtime lock poisoned")?;
     let runtime = guard
         .as_ref()
-        .ok_or_else(|| "Index a vault before opening notes".to_string())?;
+        .ok_or_else(|| "Open a vault before opening notes".to_string())?;
     runtime
         .open_by_slug(&slug)
         .map_err(|error| error.to_string())
@@ -114,7 +113,7 @@ fn open_document_by_id(state: State<'_, AppState>, id: i64) -> Result<DocumentVi
     let guard = state.runtime.lock().map_err(|_| "runtime lock poisoned")?;
     let runtime = guard
         .as_ref()
-        .ok_or_else(|| "Index a vault before opening notes".to_string())?;
+        .ok_or_else(|| "Open a vault before opening notes".to_string())?;
     runtime.open_by_id(id).map_err(|error| error.to_string())
 }
 
@@ -126,7 +125,7 @@ fn open_document_by_path(
     let guard = state.runtime.lock().map_err(|_| "runtime lock poisoned")?;
     let runtime = guard
         .as_ref()
-        .ok_or_else(|| "Index a vault before opening notes".to_string())?;
+        .ok_or_else(|| "Open a vault before opening notes".to_string())?;
     runtime
         .open_by_relative_path(&relative_path)
         .map_err(|error| error.to_string())
@@ -137,7 +136,7 @@ fn file_browser(state: State<'_, AppState>) -> Result<FileBrowserSnapshot, Strin
     let guard = state.runtime.lock().map_err(|_| "runtime lock poisoned")?;
     let runtime = guard
         .as_ref()
-        .ok_or_else(|| "Index a vault before browsing files".to_string())?;
+        .ok_or_else(|| "Open a vault before browsing files".to_string())?;
     runtime.file_browser().map_err(|error| error.to_string())
 }
 
@@ -149,7 +148,7 @@ fn read_document_source(
     let guard = state.runtime.lock().map_err(|_| "runtime lock poisoned")?;
     let runtime = guard
         .as_ref()
-        .ok_or_else(|| "Index a vault before editing notes".to_string())?;
+        .ok_or_else(|| "Open a vault before editing notes".to_string())?;
     runtime
         .document_source_by_relative_path(&relative_path)
         .map_err(|error| error.to_string())
@@ -157,6 +156,7 @@ fn read_document_source(
 
 #[tauri::command]
 async fn save_document_source(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     vault_path: String,
     relative_path: String,
@@ -166,15 +166,13 @@ async fn save_document_source(
         let guard = state.runtime.lock().map_err(|_| "runtime lock poisoned")?;
         let runtime = guard
             .as_ref()
-            .ok_or_else(|| "Index a vault before editing notes".to_string())?;
+            .ok_or_else(|| "Open a vault before editing notes".to_string())?;
         runtime
             .write_document_source_by_relative_path(&relative_path, &source)
             .map_err(|error| error.to_string())?;
     }
 
-    let state_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("target")
-        .join("mvv-state");
+    let state_dir = runtime_state_dir(&app)?;
     let snapshot = tauri::async_runtime::spawn_blocking(move || {
         let runtime = VaultRuntime::build(&vault_path, state_dir)?;
         let stats = runtime.stats()?;
@@ -189,6 +187,21 @@ async fn save_document_source(
     let (runtime, stats, document) = snapshot;
     *state.runtime.lock().map_err(|_| "runtime lock poisoned")? = Some(runtime);
     Ok(SaveSnapshot { stats, document })
+}
+
+fn runtime_state_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    explicit_state_dir(std::env::var_os(STATE_DIR_ENV))
+        .map(Ok)
+        .unwrap_or_else(|| app.path().app_data_dir().map_err(|error| error.to_string()))
+}
+
+fn explicit_state_dir(value: Option<std::ffi::OsString>) -> Option<PathBuf> {
+    let path = PathBuf::from(value?);
+    if path.as_os_str().is_empty() {
+        None
+    } else {
+        Some(path)
+    }
 }
 
 pub fn run() {
@@ -220,5 +233,15 @@ mod tests {
             default_vault_path(),
             "/Users/viggomeesters/Library/Mobile Documents/iCloud~md~obsidian/Documents/vault"
         );
+    }
+
+    #[test]
+    fn supports_explicit_runtime_state_directory_override() {
+        assert_eq!(
+            explicit_state_dir(Some("/tmp/mvv-state-test".into())),
+            Some(PathBuf::from("/tmp/mvv-state-test"))
+        );
+        assert_eq!(explicit_state_dir(Some("".into())), None);
+        assert_eq!(explicit_state_dir(None), None);
     }
 }

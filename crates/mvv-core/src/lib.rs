@@ -10,13 +10,16 @@ use pulldown_cmark::{html, Options, Parser};
 use regex::Regex;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tantivy::collector::TopDocs;
 use tantivy::query::QueryParser;
 use tantivy::schema::{
     Field, OwnedValue, Schema, TantivyDocument, FAST, INDEXED, STORED, STRING, TEXT,
 };
-use tantivy::{doc, Index};
+use tantivy::{doc, Index, IndexWriter, Term};
 use walkdir::WalkDir;
+
+const PARSER_VERSION: &str = "mvv-core-parser-v1";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct VaultStats {
@@ -117,6 +120,7 @@ struct WikiLink {
 #[derive(Debug, Clone)]
 struct SearchFields {
     id: Field,
+    doc_key: Field,
     slug: Field,
     title: Field,
     filename: Field,
@@ -136,6 +140,24 @@ struct DocumentSummary {
     body: String,
 }
 
+#[derive(Debug, Clone)]
+struct FileIndexState {
+    content_hash: String,
+    search_hash: Option<String>,
+    parser_version: String,
+    status: String,
+}
+
+#[derive(Debug, Clone)]
+struct SearchDocumentRow {
+    id: i64,
+    slug: String,
+    title: String,
+    filename: String,
+    relative_path: String,
+    body: String,
+}
+
 impl VaultRuntime {
     pub fn build(root: impl AsRef<Path>, state_dir: impl AsRef<Path>) -> Result<Self> {
         let root = root.as_ref().to_path_buf();
@@ -144,12 +166,6 @@ impl VaultRuntime {
 
         let db_path = state_dir.join("mega-vault-viewer.sqlite");
         let index_dir = state_dir.join("tantivy");
-        if db_path.exists() {
-            fs::remove_file(&db_path).context("clear sqlite index")?;
-        }
-        if index_dir.exists() {
-            fs::remove_dir_all(&index_dir).context("clear tantivy index")?;
-        }
         fs::create_dir_all(&index_dir).context("create tantivy index directory")?;
 
         let runtime = Self {
@@ -157,8 +173,12 @@ impl VaultRuntime {
             db_path,
             index_dir,
         };
-        runtime.rebuild()?;
+        runtime.sync()?;
         Ok(runtime)
+    }
+
+    pub fn reset_runtime_state(state_dir: impl AsRef<Path>) -> Result<()> {
+        reset_runtime_state_dir(state_dir.as_ref())
     }
 
     pub fn stats(&self) -> Result<VaultStats> {
@@ -385,56 +405,116 @@ impl VaultRuntime {
         Ok(path)
     }
 
-    fn rebuild(&self) -> Result<()> {
+    fn sync(&self) -> Result<()> {
         let mut conn = self.open_db()?;
         create_schema(&conn)?;
-        let (index, fields) = create_search_index(&self.index_dir)?;
+        let (index, fields, search_recreated) = open_or_create_search_index(&self.index_dir)?;
         let mut writer = index.writer(50_000_000).context("create tantivy writer")?;
+        let discovered_paths = discover_markdown_paths(&self.root)?;
+        let discovered_relative_paths = discovered_paths
+            .iter()
+            .map(|path| relative_path_for(&self.root, path))
+            .collect::<std::collections::BTreeSet<_>>();
+        let mut search_synced = Vec::new();
+        let mut search_deleted = Vec::new();
+
         let tx = conn
             .transaction()
             .context("start sqlite index transaction")?;
 
         {
-            let mut insert_document = tx.prepare(
-                "insert into documents (slug, title, filename, stem, path, relative_path, body, frontmatter_json, frontmatter_error) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            )?;
-            let mut insert_link = tx.prepare(
-                "insert into links (source_slug, target_slug, label) values (?1, ?2, ?3)",
-            )?;
-
-            for path in discover_markdown_paths(&self.root)? {
-                let document = parse_markdown(&path, &self.root)?;
-                insert_document.execute(params![
-                    document.slug,
-                    document.title,
-                    document.filename,
-                    document.stem,
-                    document.path.to_string_lossy(),
-                    document.relative_path,
-                    document.body,
-                    document
-                        .frontmatter
+            for path in discovered_paths {
+                let relative_path = relative_path_for(&self.root, &path);
+                let source = fs::read_to_string(&path)
+                    .with_context(|| format!("read {}", path.display()))?;
+                let content_hash = content_hash(&source);
+                let metadata = fs::metadata(&path)
+                    .with_context(|| format!("read metadata {}", path.display()))?;
+                let size_bytes = metadata.len() as i64;
+                let modified_ns = metadata.modified().ok().and_then(system_time_nanos);
+                let file_state = file_index_state(&tx, &relative_path)?;
+                let needs_document_update = file_state
+                    .as_ref()
+                    .map(|state| {
+                        state.status != "indexed"
+                            || state.content_hash != content_hash
+                            || state.parser_version != PARSER_VERSION
+                    })
+                    .unwrap_or(true);
+                let needs_search_update = search_recreated
+                    || needs_document_update
+                    || file_state
                         .as_ref()
-                        .map(serde_json::Value::to_string),
-                    document.frontmatter_error,
-                ])?;
-                let id = tx.last_insert_rowid();
-                for link in &document.links {
-                    insert_link.execute(params![document.slug, link.target, link.label])?;
+                        .and_then(|state| state.search_hash.as_deref())
+                        != Some(content_hash.as_str());
+
+                if needs_document_update {
+                    let document = parse_markdown_source(&path, &self.root, &source)?;
+                    let id = upsert_document(&tx, &document)?;
+                    upsert_file_state(
+                        &tx,
+                        &document,
+                        size_bytes,
+                        modified_ns,
+                        &content_hash,
+                        file_state.and_then(|state| state.search_hash),
+                    )?;
+
+                    if needs_search_update {
+                        replace_search_document(&mut writer, &fields, id, &document)?;
+                    }
+                } else if needs_search_update {
+                    if let Some(document) =
+                        document_for_search_by_relative_path(&tx, &relative_path)?
+                    {
+                        replace_search_row(&mut writer, &fields, &document)?;
+                    }
                 }
-                writer.add_document(doc!(
-                    fields.id => id as u64,
-                    fields.slug => document.slug,
-                    fields.title => document.title,
-                    fields.filename => document.filename,
-                    fields.relative_path => document.relative_path,
-                    fields.body => document.body,
-                ))?;
+
+                if needs_search_update {
+                    search_synced.push((relative_path, content_hash));
+                }
+            }
+
+            let indexed_paths = indexed_file_paths(&tx)?;
+            for relative_path in indexed_paths {
+                if discovered_relative_paths.contains(&relative_path) {
+                    continue;
+                }
+                if let Some(slug) = document_slug_by_relative_path(&tx, &relative_path)? {
+                    tx.execute("delete from links where source_slug = ?1", [slug])?;
+                }
+                tx.execute(
+                    "delete from documents where relative_path = ?1",
+                    [&relative_path],
+                )?;
+                tx.execute(
+                    "update files set status = 'deleted', indexed_at = ?2 where relative_path = ?1",
+                    params![relative_path, unix_timestamp()],
+                )?;
+                writer.delete_term(Term::from_field_text(fields.doc_key, &relative_path));
+                search_deleted.push(relative_path);
+            }
+
+            for relative_path in document_paths(&tx)? {
+                if discovered_relative_paths.contains(&relative_path) {
+                    continue;
+                }
+                if let Some(slug) = document_slug_by_relative_path(&tx, &relative_path)? {
+                    tx.execute("delete from links where source_slug = ?1", [slug])?;
+                }
+                tx.execute(
+                    "delete from documents where relative_path = ?1",
+                    [&relative_path],
+                )?;
+                writer.delete_term(Term::from_field_text(fields.doc_key, &relative_path));
+                search_deleted.push(relative_path);
             }
         }
 
         tx.commit().context("commit sqlite index transaction")?;
         writer.commit().context("commit tantivy index")?;
+        mark_search_synced(&conn, &search_synced, &search_deleted)?;
         Ok(())
     }
 
@@ -453,7 +533,7 @@ impl VaultRuntime {
 fn create_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         r#"
-        create table documents (
+        create table if not exists documents (
           id integer primary key autoincrement,
           slug text not null,
           title text not null,
@@ -465,19 +545,249 @@ fn create_schema(conn: &Connection) -> Result<()> {
           frontmatter_json text,
           frontmatter_error text
         );
-        create table links (
+        create table if not exists links (
           id integer primary key autoincrement,
           source_slug text not null,
           target_slug text not null,
           label text not null
         );
-        create index documents_slug on documents(slug);
-        create index documents_relative_path on documents(relative_path);
-        create index links_source on links(source_slug);
-        create index links_target on links(target_slug);
+        create table if not exists files (
+          relative_path text primary key,
+          absolute_path text not null,
+          size_bytes integer not null,
+          modified_ns integer,
+          content_hash text not null,
+          search_hash text,
+          indexed_at integer not null,
+          parser_version text not null,
+          status text not null
+        );
+        create index if not exists documents_slug on documents(slug);
+        create index if not exists documents_relative_path on documents(relative_path);
+        create index if not exists links_source on links(source_slug);
+        create index if not exists links_target on links(target_slug);
+        create index if not exists files_status on files(status);
         "#,
     )?;
     Ok(())
+}
+
+fn file_index_state(conn: &Connection, relative_path: &str) -> Result<Option<FileIndexState>> {
+    conn.query_row(
+        "select content_hash, search_hash, parser_version, status from files where relative_path = ?1",
+        [relative_path],
+        |row| {
+            Ok(FileIndexState {
+                content_hash: row.get(0)?,
+                search_hash: row.get(1)?,
+                parser_version: row.get(2)?,
+                status: row.get(3)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
+fn upsert_document(conn: &Connection, document: &IndexedDocument) -> Result<i64> {
+    let existing = conn
+        .query_row(
+            "select id, slug from documents where relative_path = ?1",
+            [&document.relative_path],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?;
+
+    if let Some((id, old_slug)) = existing {
+        conn.execute("delete from links where source_slug = ?1", [old_slug])?;
+        conn.execute(
+            "update documents set slug = ?1, title = ?2, filename = ?3, stem = ?4, path = ?5, body = ?6, frontmatter_json = ?7, frontmatter_error = ?8 where id = ?9",
+            params![
+                document.slug,
+                document.title,
+                document.filename,
+                document.stem,
+                document.path.to_string_lossy(),
+                document.body,
+                document
+                    .frontmatter
+                    .as_ref()
+                    .map(serde_json::Value::to_string),
+                document.frontmatter_error,
+                id,
+            ],
+        )?;
+        insert_links(conn, document)?;
+        Ok(id)
+    } else {
+        conn.execute(
+            "insert into documents (slug, title, filename, stem, path, relative_path, body, frontmatter_json, frontmatter_error) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                document.slug,
+                document.title,
+                document.filename,
+                document.stem,
+                document.path.to_string_lossy(),
+                document.relative_path,
+                document.body,
+                document
+                    .frontmatter
+                    .as_ref()
+                    .map(serde_json::Value::to_string),
+                document.frontmatter_error,
+            ],
+        )?;
+        let id = conn.last_insert_rowid();
+        insert_links(conn, document)?;
+        Ok(id)
+    }
+}
+
+fn insert_links(conn: &Connection, document: &IndexedDocument) -> Result<()> {
+    let mut insert_link =
+        conn.prepare("insert into links (source_slug, target_slug, label) values (?1, ?2, ?3)")?;
+    for link in &document.links {
+        insert_link.execute(params![document.slug, link.target, link.label])?;
+    }
+    Ok(())
+}
+
+fn upsert_file_state(
+    conn: &Connection,
+    document: &IndexedDocument,
+    size_bytes: i64,
+    modified_ns: Option<i64>,
+    content_hash: &str,
+    previous_search_hash: Option<String>,
+) -> Result<()> {
+    conn.execute(
+        r#"
+        insert into files (
+          relative_path, absolute_path, size_bytes, modified_ns, content_hash,
+          search_hash, indexed_at, parser_version, status
+        ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'indexed')
+        on conflict(relative_path) do update set
+          absolute_path = excluded.absolute_path,
+          size_bytes = excluded.size_bytes,
+          modified_ns = excluded.modified_ns,
+          content_hash = excluded.content_hash,
+          search_hash = excluded.search_hash,
+          indexed_at = excluded.indexed_at,
+          parser_version = excluded.parser_version,
+          status = 'indexed'
+        "#,
+        params![
+            document.relative_path,
+            document.path.to_string_lossy(),
+            size_bytes,
+            modified_ns,
+            content_hash,
+            previous_search_hash,
+            unix_timestamp(),
+            PARSER_VERSION,
+        ],
+    )?;
+    Ok(())
+}
+
+fn indexed_file_paths(conn: &Connection) -> Result<Vec<String>> {
+    let mut statement = conn.prepare("select relative_path from files where status = 'indexed'")?;
+    let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
+}
+
+fn document_paths(conn: &Connection) -> Result<Vec<String>> {
+    let mut statement = conn.prepare("select relative_path from documents")?;
+    let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
+}
+
+fn document_slug_by_relative_path(
+    conn: &Connection,
+    relative_path: &str,
+) -> Result<Option<String>> {
+    conn.query_row(
+        "select slug from documents where relative_path = ?1",
+        [relative_path],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
+fn document_for_search_by_relative_path(
+    conn: &Connection,
+    relative_path: &str,
+) -> Result<Option<SearchDocumentRow>> {
+    conn.query_row(
+        "select id, slug, title, filename, relative_path, body from documents where relative_path = ?1",
+        [relative_path],
+        |row| {
+            Ok(SearchDocumentRow {
+                id: row.get(0)?,
+                slug: row.get(1)?,
+                title: row.get(2)?,
+                filename: row.get(3)?,
+                relative_path: row.get(4)?,
+                body: row.get(5)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
+fn mark_search_synced(
+    conn: &Connection,
+    synced: &[(String, String)],
+    deleted: &[String],
+) -> Result<()> {
+    for (relative_path, content_hash) in synced {
+        conn.execute(
+            "update files set search_hash = ?2 where relative_path = ?1 and status = 'indexed'",
+            params![relative_path, content_hash],
+        )?;
+    }
+    for relative_path in deleted {
+        conn.execute(
+            "update files set search_hash = null where relative_path = ?1 and status = 'deleted'",
+            [relative_path],
+        )?;
+    }
+    Ok(())
+}
+
+fn reset_runtime_state_dir(state_dir: &Path) -> Result<()> {
+    let db_path = state_dir.join("mega-vault-viewer.sqlite");
+    for path in [
+        db_path.clone(),
+        sqlite_sidecar_path(&db_path, "-wal"),
+        sqlite_sidecar_path(&db_path, "-shm"),
+        sqlite_sidecar_path(&db_path, "-journal"),
+    ] {
+        if path.exists() {
+            fs::remove_file(&path)
+                .with_context(|| format!("remove runtime cache file {}", path.display()))?;
+        }
+    }
+
+    for dir_name in ["tantivy", "thumbnails", "render-cache"] {
+        let path = state_dir.join(dir_name);
+        if path.exists() {
+            fs::remove_dir_all(&path)
+                .with_context(|| format!("remove runtime cache directory {}", path.display()))?;
+        }
+    }
+
+    Ok(())
+}
+
+fn sqlite_sidecar_path(db_path: &Path, suffix: &str) -> PathBuf {
+    let mut path = db_path.as_os_str().to_os_string();
+    path.push(suffix);
+    PathBuf::from(path)
 }
 
 fn discover_markdown_paths(root: &Path) -> Result<Vec<PathBuf>> {
@@ -495,9 +805,8 @@ fn discover_markdown_paths(root: &Path) -> Result<Vec<PathBuf>> {
     Ok(paths)
 }
 
-fn parse_markdown(path: &Path, root: &Path) -> Result<IndexedDocument> {
-    let source = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    let (frontmatter, frontmatter_error, body) = split_frontmatter(&source);
+fn parse_markdown_source(path: &Path, root: &Path, source: &str) -> Result<IndexedDocument> {
+    let (frontmatter, frontmatter_error, body) = split_frontmatter(source);
     let filename = filename_for(path);
     let stem = stem_for(path);
     let absolute_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
@@ -534,6 +843,12 @@ fn parse_markdown(path: &Path, root: &Path) -> Result<IndexedDocument> {
         frontmatter_error,
         links,
     })
+}
+
+fn content_hash(source: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(source.as_bytes());
+    format!("{:x}", hasher.finalize())
 }
 
 fn filename_for(path: &Path) -> String {
@@ -827,9 +1142,33 @@ fn create_search_index(index_dir: &Path) -> Result<(Index, SearchFields)> {
     Ok((index, fields))
 }
 
+fn open_or_create_search_index(index_dir: &Path) -> Result<(Index, SearchFields, bool)> {
+    fs::create_dir_all(index_dir).context("create tantivy index directory")?;
+    match Index::open_in_dir(index_dir) {
+        Ok(index) => {
+            let schema = index.schema();
+            match fields_from_schema(&schema) {
+                Ok(fields) => Ok((index, fields, false)),
+                Err(_) => recreate_search_index(index_dir),
+            }
+        }
+        Err(_) => recreate_search_index(index_dir),
+    }
+}
+
+fn recreate_search_index(index_dir: &Path) -> Result<(Index, SearchFields, bool)> {
+    if index_dir.exists() {
+        fs::remove_dir_all(index_dir).context("clear incompatible tantivy index")?;
+    }
+    fs::create_dir_all(index_dir).context("create tantivy index directory")?;
+    let (index, fields) = create_search_index(index_dir)?;
+    Ok((index, fields, true))
+}
+
 fn search_schema() -> (Schema, SearchFields) {
     let mut builder = Schema::builder();
     let id = builder.add_u64_field("id", INDEXED | STORED | FAST);
+    let doc_key = builder.add_text_field("doc_key", STRING | STORED);
     let slug = builder.add_text_field("slug", STRING | STORED);
     let title = builder.add_text_field("title", TEXT | STORED);
     let filename = builder.add_text_field("filename", TEXT | STORED);
@@ -840,6 +1179,7 @@ fn search_schema() -> (Schema, SearchFields) {
         schema,
         SearchFields {
             id,
+            doc_key,
             slug,
             title,
             filename,
@@ -852,12 +1192,56 @@ fn search_schema() -> (Schema, SearchFields) {
 fn fields_from_schema(schema: &Schema) -> Result<SearchFields> {
     Ok(SearchFields {
         id: schema.get_field("id")?,
+        doc_key: schema.get_field("doc_key")?,
         slug: schema.get_field("slug")?,
         title: schema.get_field("title")?,
         filename: schema.get_field("filename")?,
         relative_path: schema.get_field("relative_path")?,
         body: schema.get_field("body")?,
     })
+}
+
+fn replace_search_document(
+    writer: &mut IndexWriter,
+    fields: &SearchFields,
+    id: i64,
+    document: &IndexedDocument,
+) -> Result<()> {
+    writer.delete_term(Term::from_field_text(
+        fields.doc_key,
+        &document.relative_path,
+    ));
+    writer.add_document(doc!(
+        fields.id => id as u64,
+        fields.doc_key => document.relative_path.as_str(),
+        fields.slug => document.slug.as_str(),
+        fields.title => document.title.as_str(),
+        fields.filename => document.filename.as_str(),
+        fields.relative_path => document.relative_path.as_str(),
+        fields.body => document.body.as_str(),
+    ))?;
+    Ok(())
+}
+
+fn replace_search_row(
+    writer: &mut IndexWriter,
+    fields: &SearchFields,
+    document: &SearchDocumentRow,
+) -> Result<()> {
+    writer.delete_term(Term::from_field_text(
+        fields.doc_key,
+        &document.relative_path,
+    ));
+    writer.add_document(doc!(
+        fields.id => document.id as u64,
+        fields.doc_key => document.relative_path.as_str(),
+        fields.slug => document.slug.as_str(),
+        fields.title => document.title.as_str(),
+        fields.filename => document.filename.as_str(),
+        fields.relative_path => document.relative_path.as_str(),
+        fields.body => document.body.as_str(),
+    ))?;
+    Ok(())
 }
 
 fn first_u64(document: &TantivyDocument, field: Field) -> Option<u64> {
@@ -1015,6 +1399,18 @@ fn system_time_seconds(time: std::time::SystemTime) -> Option<u64> {
     time.duration_since(UNIX_EPOCH)
         .ok()
         .map(|duration| duration.as_secs())
+}
+
+fn system_time_nanos(time: std::time::SystemTime) -> Option<i64> {
+    let nanos = time.duration_since(UNIX_EPOCH).ok()?.as_nanos();
+    i64::try_from(nanos).ok()
+}
+
+fn unix_timestamp() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 fn timestamp_from_filename(filename: &str) -> Option<u64> {
