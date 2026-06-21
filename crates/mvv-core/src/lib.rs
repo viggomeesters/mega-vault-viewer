@@ -1083,6 +1083,10 @@ fn fallback_title(path: &Path) -> String {
 fn extract_wikilinks(body: &str) -> Vec<WikiLink> {
     let re = Regex::new(r"\[\[([^\]|]+)(?:\|([^\]]+))?\]\]").expect("valid wikilink regex");
     re.captures_iter(body)
+        .filter(|captures| {
+            let start = captures.get(0).map(|matched| matched.start()).unwrap_or(0);
+            start == 0 || !body[..start].ends_with('!')
+        })
         .map(|captures| {
             let target = captures.get(1).map(|m| m.as_str()).unwrap_or("").trim();
             let label = captures
@@ -1100,7 +1104,9 @@ fn extract_wikilinks(body: &str) -> Vec<WikiLink> {
 }
 
 fn render_markdown(body: &str, vault_root: &Path, document_path: &Path) -> String {
-    let markdown = replace_obsidian_image_embeds(body, vault_root, document_path);
+    let markdown = replace_obsidian_callouts(body);
+    let markdown = replace_inline_tags(&markdown);
+    let markdown = replace_obsidian_image_embeds(&markdown, vault_root, document_path);
     let markdown = replace_markdown_images(&markdown, vault_root, document_path);
     let re = Regex::new(r"\[\[([^\]|!]+)(?:\|([^\]]+))?\]\]").expect("valid wikilink regex");
     let markdown = re.replace_all(&markdown, |captures: &regex::Captures<'_>| {
@@ -1110,7 +1116,10 @@ fn render_markdown(body: &str, vault_root: &Path, document_path: &Path) -> Strin
             .map(|m| m.as_str().trim())
             .filter(|value| !value.is_empty())
             .unwrap_or(target);
-        format!("[{label}](mvv://open/{target})")
+        format!(
+            "[{label}](mvv://open/{})",
+            percent_encode_link_target(target)
+        )
     });
     catch_unwind_silent(|| {
         let parser = Parser::new_ext(&markdown, Options::all());
@@ -1119,6 +1128,137 @@ fn render_markdown(body: &str, vault_root: &Path, document_path: &Path) -> Strin
         rendered
     })
     .unwrap_or_else(|_| render_plaintext_fallback(body))
+}
+
+fn replace_obsidian_callouts(body: &str) -> String {
+    let marker = Regex::new(r"^>\s*\[!([A-Za-z0-9_-]+)\]\s*(.*)$").expect("valid callout regex");
+    let mut output = Vec::new();
+    let lines = body.lines().collect::<Vec<_>>();
+    let mut index = 0;
+
+    while index < lines.len() {
+        let line = lines[index];
+        let Some(captures) = marker.captures(line) else {
+            output.push(line.to_string());
+            index += 1;
+            continue;
+        };
+
+        let kind = captures
+            .get(1)
+            .map(|matched| sanitize_callout_kind(matched.as_str()))
+            .unwrap_or_else(|| "note".to_string());
+        let title = captures
+            .get(2)
+            .map(|matched| matched.as_str().trim())
+            .filter(|value| !value.is_empty())
+            .unwrap_or(kind.as_str());
+        index += 1;
+
+        let mut body_lines = Vec::new();
+        while index < lines.len() {
+            let next = lines[index];
+            if !next.trim_start().starts_with('>') {
+                break;
+            }
+            let content = next
+                .trim_start()
+                .strip_prefix('>')
+                .unwrap_or(next)
+                .strip_prefix(' ')
+                .unwrap_or_else(|| next.trim_start().strip_prefix('>').unwrap_or(next));
+            body_lines.push(content.to_string());
+            index += 1;
+        }
+
+        output.push(render_callout_html(&kind, title, &body_lines));
+    }
+
+    output.join("\n")
+}
+
+fn render_callout_html(kind: &str, title: &str, body_lines: &[String]) -> String {
+    let mut html = format!(
+        r#"<aside class="callout callout-{}"><p class="callout-title">{}</p>"#,
+        kind,
+        escape_html(title)
+    );
+    for paragraph in body_lines
+        .split(|line| line.trim().is_empty())
+        .filter(|paragraph| !paragraph.is_empty())
+    {
+        html.push_str("<p>");
+        html.push_str(&escape_html(&paragraph.join(" ")));
+        html.push_str("</p>");
+    }
+    html.push_str("</aside>");
+    html
+}
+
+fn sanitize_callout_kind(value: &str) -> String {
+    let sanitized = value
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric() || *character == '-')
+        .flat_map(|character| character.to_lowercase())
+        .collect::<String>();
+    if sanitized.is_empty() {
+        "note".to_string()
+    } else {
+        sanitized
+    }
+}
+
+fn replace_inline_tags(body: &str) -> String {
+    let tag = Regex::new(r"(^|[\s(])#([A-Za-z][A-Za-z0-9_/-]*)\b").expect("valid tag regex");
+    let mut in_fence = false;
+    body.lines()
+        .map(|line| {
+            if line.trim_start().starts_with("```") {
+                in_fence = !in_fence;
+                return line.to_string();
+            }
+            if in_fence || is_markdown_heading(line) {
+                return line.to_string();
+            }
+            tag.replace_all(line, |captures: &regex::Captures<'_>| {
+                let prefix = captures
+                    .get(1)
+                    .map(|matched| matched.as_str())
+                    .unwrap_or("");
+                let value = captures
+                    .get(2)
+                    .map(|matched| matched.as_str())
+                    .unwrap_or("");
+                format!(
+                    r#"{prefix}<span class="vault-tag">#{}</span>"#,
+                    escape_html(value)
+                )
+            })
+            .into_owned()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn is_markdown_heading(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    let marker_width = trimmed
+        .chars()
+        .take_while(|character| *character == '#')
+        .count();
+    (1..=6).contains(&marker_width) && trimmed.chars().nth(marker_width) == Some(' ')
+}
+
+fn percent_encode_link_target(value: &str) -> String {
+    value
+        .bytes()
+        .map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
+                (byte as char).to_string()
+            }
+            _ => format!("%{byte:02X}"),
+        })
+        .collect()
 }
 
 fn replace_obsidian_image_embeds(body: &str, vault_root: &Path, document_path: &Path) -> String {
@@ -1613,18 +1753,49 @@ mod tests {
     #[test]
     fn renders_wikilinks_as_local_links() {
         let html = render_markdown(
-            "Open [[target-slug|Target]].",
+            "Open [[target-slug|Target]] and [[Migraine × Sensorisch]].",
             Path::new("."),
             Path::new("note.md"),
         );
         assert!(html.contains("mvv://open/target-slug"));
         assert!(html.contains(">Target</a>"));
+        assert!(html.contains("mvv://open/Migraine%20%C3%97%20Sensorisch"));
+        assert!(html.contains(">Migraine × Sensorisch</a>"));
+    }
+
+    #[test]
+    fn renders_callouts_and_inline_tags_without_rewriting_headings_or_code() {
+        let html = render_markdown(
+            r#"# Real Heading
+
+Paragraph with #reader/tag.
+
+```text
+#not-a-tag
+```
+
+> [!warning] Watch this
+> Keep the callout visible.
+
+> Ordinary quote.
+"#,
+            Path::new("."),
+            Path::new("note.md"),
+        );
+
+        assert!(html.contains("<h1>Real Heading</h1>"));
+        assert!(html.contains(r#"<span class="vault-tag">#reader/tag</span>"#));
+        assert!(html.contains("#not-a-tag"));
+        assert!(html.contains(r#"<aside class="callout callout-warning">"#));
+        assert!(html.contains(r#"<p class="callout-title">Watch this</p>"#));
+        assert!(html.contains("<blockquote>"));
+        assert!(html.contains("Ordinary quote."));
     }
 
     #[test]
     fn extracts_wikilink_targets_and_labels() {
         assert_eq!(
-            extract_wikilinks("[[alpha]] and [[beta|Beta Label]]"),
+            extract_wikilinks("[[alpha]] and [[beta|Beta Label]] and ![[media.png]]"),
             vec![
                 WikiLink {
                     target: "alpha".to_string(),

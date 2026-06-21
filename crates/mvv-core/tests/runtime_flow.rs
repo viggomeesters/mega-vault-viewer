@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::Path;
 
 use mvv_core::VaultRuntime;
 
@@ -505,4 +506,51 @@ slug: image-note
     assert!(image_note.html.contains("class=\"missing-media\""));
     assert!(image_note.html.contains("missing.png"));
     assert!(!image_note.html.contains("src=\"local.jpg\""));
+}
+
+#[test]
+fn reader_fixture_pins_markdown_and_obsidian_rendering_semantics() {
+    let temp = tempfile::tempdir().unwrap();
+    let vault = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("fixtures/reader-vault");
+
+    let runtime = VaultRuntime::build(&vault, temp.path().join("state")).unwrap();
+    let document = runtime.open_by_slug("reader-quality").unwrap();
+
+    assert_eq!(document.title, "Reader Quality Fixture");
+    assert_eq!(document.frontmatter.as_ref().unwrap()["type"], "reference");
+    assert_eq!(document.frontmatter_error, None);
+    assert_eq!(document.outgoing_links, vec!["target-note"]);
+
+    let html = document.html;
+    assert!(html.contains("<h1>Reader Quality Fixture</h1>"));
+    assert!(html.contains("<h2>Tasks</h2>"));
+    assert!(html.contains(r#"<span class="vault-tag">#inline-tag</span>"#));
+    assert!(html.contains(r#"href="mvv://open/target-note""#));
+    assert!(html.contains(">friendly WikiLink</a>"));
+    assert!(html.contains("<code>inline code</code>"));
+    assert!(html.contains(r#"type="checkbox""#));
+    assert!(html.contains("Keep source available"));
+    assert!(html.contains("<table>"));
+    assert!(html.contains("<td>Readable columns</td>"));
+    assert!(html.contains(r#"<code class="language-rust">"#));
+    assert!(html.contains(r#"<aside class="callout callout-tip">"#));
+    assert!(html.contains(r#"<p class="callout-title">Reader tip</p>"#));
+    assert!(html.contains("<blockquote>"));
+    assert!(html.contains("Plain blockquotes still render as ordinary quoted text."));
+    assert!(html.contains(r#"class="vault-image""#));
+    assert!(html.contains(r#"alt="Fixture image""#));
+    assert!(html.contains(r#"alt="Embedded red pixel""#));
+    assert!(!html.contains("![[red.png"));
+
+    let edge = runtime
+        .open_by_slug("20260621-1705-reader-frontmatter-edge")
+        .unwrap();
+    assert_eq!(edge.frontmatter, None);
+    assert!(edge.frontmatter_error.unwrap().contains("frontmatter"));
+    assert!(edge.html.contains("Broken Frontmatter Fixture"));
+    assert!(edge
+        .html
+        .contains("Malformed frontmatter should be reported"));
 }
