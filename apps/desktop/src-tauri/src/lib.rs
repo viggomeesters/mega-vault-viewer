@@ -8,8 +8,7 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
 use tauri::{Emitter, Manager, State};
 
-const DEFAULT_VAULT_PATH: &str =
-    "/Users/viggomeesters/Library/Mobile Documents/iCloud~md~obsidian/Documents/vault";
+const DEFAULT_VAULT_PATH_ENV: &str = "MEGA_VAULT_VIEWER_DEFAULT_VAULT_PATH";
 const STATE_DIR_ENV: &str = "MEGA_VAULT_VIEWER_STATE_DIR";
 
 #[derive(Default)]
@@ -55,7 +54,7 @@ struct WatchStatus {
 
 #[tauri::command]
 fn default_vault_path() -> String {
-    DEFAULT_VAULT_PATH.to_string()
+    default_vault_path_from_env(std::env::var(DEFAULT_VAULT_PATH_ENV).ok())
 }
 
 #[tauri::command]
@@ -348,6 +347,10 @@ fn explicit_state_dir(value: Option<std::ffi::OsString>) -> Option<PathBuf> {
     }
 }
 
+fn default_vault_path_from_env(value: Option<String>) -> String {
+    value.unwrap_or_default()
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState::default())
@@ -378,10 +381,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn defaults_to_viggos_obsidian_vault() {
+    fn defaults_to_blank_vault_path_without_user_configuration() {
+        assert_eq!(default_vault_path_from_env(None), "");
+    }
+
+    #[test]
+    fn supports_explicit_default_vault_path_override() {
         assert_eq!(
-            default_vault_path(),
-            "/Users/viggomeesters/Library/Mobile Documents/iCloud~md~obsidian/Documents/vault"
+            default_vault_path_from_env(Some("/tmp/example-vault".into())),
+            "/tmp/example-vault"
         );
     }
 

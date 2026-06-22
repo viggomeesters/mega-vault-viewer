@@ -24,8 +24,9 @@ npm install
 npm run desktop:dev
 ```
 
-The app defaults to `/Users/viggomeesters/Library/Mobile Documents/iCloud~md~obsidian/Documents/vault`.
-Replace the path with any local folder containing Markdown notes or other vault files when needed.
+The app starts with a blank vault path. Enter any local folder containing Markdown notes or other vault files, or set `MEGA_VAULT_VIEWER_DEFAULT_VAULT_PATH=/path/to/vault` before launch to prefill the field.
+
+For a small synthetic sample, use `fixtures/demo-vault`.
 
 ## Build macOS App
 

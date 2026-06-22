@@ -1,6 +1,6 @@
 # AGENTS.md - Mega Vault Viewer
 
-This repository builds a local-first vault viewer that can eventually replace the Obsidian read path for large Life OS vaults.
+This repository builds a local-first vault viewer for large Markdown knowledge vaults, including Obsidian-style vaults.
 
 ## Product Direction
 

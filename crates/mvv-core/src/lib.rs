@@ -2379,26 +2379,26 @@ mod tests {
     #[test]
     fn keeps_simple_metadata_when_frontmatter_has_unparseable_lines() {
         let (frontmatter, error, body) = split_frontmatter(
-            "---\ntitle: [broken\nproject: alpha\nentity: [viggo]\n---\n# Body\n",
+            "---\ntitle: [broken\nproject: alpha\nentity: [example]\n---\n# Body\n",
         );
         let frontmatter = frontmatter.unwrap();
         assert!(error.unwrap().contains("frontmatter parse failed"));
         assert_eq!(frontmatter["project"].as_str(), Some("alpha"));
-        assert_eq!(frontmatter["entity"][0].as_str(), Some("viggo"));
+        assert_eq!(frontmatter["entity"][0].as_str(), Some("example"));
         assert_eq!(body, "# Body\n");
     }
 
     #[test]
     fn renders_wikilinks_as_local_links() {
         let html = render_markdown(
-            "Open [[target-slug|Target]] and [[Migraine × Sensorisch]].",
+            "Open [[target-slug|Target]] and [[Example × Topic]].",
             Path::new("."),
             Path::new("note.md"),
         );
         assert!(html.contains("mvv://open/target-slug"));
         assert!(html.contains(">Target</a>"));
-        assert!(html.contains("mvv://open/Migraine%20%C3%97%20Sensorisch"));
-        assert!(html.contains(">Migraine × Sensorisch</a>"));
+        assert!(html.contains("mvv://open/Example%20%C3%97%20Topic"));
+        assert!(html.contains(">Example × Topic</a>"));
     }
 
     #[test]
