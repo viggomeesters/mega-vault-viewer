@@ -1,6 +1,6 @@
 # Mega Vault Viewer
 
-![Mega Vault Viewer hero](assets/hero.svg)
+![Mega Vault Viewer conceptual hero](assets/hero.svg)
 
 Mega Vault Viewer is a local-first macOS desktop app for reading and exploring large mixed-format knowledge vaults. It keeps your files as the source of truth and builds rebuildable local indexes for search, navigation, backlinks, and metadata views.
 

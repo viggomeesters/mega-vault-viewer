@@ -4,17 +4,18 @@ Public visuals must be safe to publish. Do not use screenshots from a private va
 
 ## Current Assets
 
-- `assets/hero.svg` - README hero image.
-- `assets/social-preview.svg` - GitHub/social preview candidate.
+- `assets/hero.svg` - conceptual README hero image, not a literal product screenshot.
+- `assets/social-preview.svg` - conceptual GitHub/social preview candidate.
 - `assets/screenshot-fixture-vault.svg` - representative app screenshot with synthetic fixture data.
 
 ## Refresh Workflow
 
 1. Use `fixtures/demo-vault` or a tiny synthetic vault.
 2. Avoid real personal names, client names, private paths, tokens, and screenshots from private notes.
-3. Capture or generate a visual that shows the actual product shape: sidebar, indexed vault, rendered note, and local-first messaging.
-4. Save final assets under `assets/`.
-5. Run the privacy scan from the public readiness task before publishing.
+3. Keep hero and social preview assets simple, sharp, and conceptual. Use large text and shapes that remain readable when GitHub scales the image down.
+4. Capture or generate real product screenshots separately, using synthetic fixture data only.
+5. Save final assets under `assets/`.
+6. Run the privacy scan from the public readiness task before publishing.
 
 For a future real screenshot, build or run the desktop app with fixture data:
 
