@@ -1,5 +1,7 @@
 # Mega Vault Viewer
 
+![Mega Vault Viewer hero](assets/hero.svg)
+
 Mega Vault Viewer is a local-first macOS desktop app for reading and exploring large mixed-format knowledge vaults. It keeps your files as the source of truth and builds rebuildable local indexes for search, navigation, backlinks, and metadata views.
 
 The app is aimed at people who like Markdown and filesystem-based knowledge work, but need faster indexed views and a calmer reader than a raw folder of notes.
@@ -26,13 +28,17 @@ Known maturity boundaries:
 
 ## Screenshots And Demo
 
-Public screenshots and social assets live under `assets/` when available. They must use fixture or synthetic data only. Do not publish screenshots from a private vault.
+Public screenshots and social assets live under `assets/`. They use fixture or synthetic data only. Do not publish screenshots from a private vault.
+
+![Representative screenshot using fixture data](assets/screenshot-fixture-vault.svg)
 
 For a safe demo vault, use:
 
 ```bash
 fixtures/demo-vault
 ```
+
+See [docs/visual-assets.md](docs/visual-assets.md) for the screenshot refresh workflow.
 
 ## Architecture
 

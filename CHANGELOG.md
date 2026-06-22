@@ -12,6 +12,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Security policy, contribution guide, issue template, and pull request template.
 - GitHub Actions CI workflow for Rust, TypeScript, Vite, and Tauri build checks.
 - Release guide for local app builds, versioning, tags, and unsigned artifact caveats.
+- Public-safe hero, social preview, and representative screenshot assets.
+- Visual asset refresh workflow using fixture or synthetic data only.
 
 ### Notes
 

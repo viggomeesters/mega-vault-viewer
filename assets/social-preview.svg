@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-labelledby="title desc">
+  <title id="title">Mega Vault Viewer social preview</title>
+  <desc id="desc">Social preview for Mega Vault Viewer, a local-first indexed vault reader.</desc>
+  <rect width="1280" height="640" fill="#101820"/>
+  <rect x="70" y="78" width="1140" height="484" rx="28" fill="#151d22" stroke="#34444d" stroke-width="3"/>
+  <rect x="70" y="78" width="1140" height="68" rx="28" fill="#0d1317"/>
+  <circle cx="106" cy="112" r="10" fill="#ff5f57"/>
+  <circle cx="138" cy="112" r="10" fill="#ffbd2e"/>
+  <circle cx="170" cy="112" r="10" fill="#28c840"/>
+  <text x="96" y="246" fill="#f8fafc" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="76" font-weight="780">Mega Vault Viewer</text>
+  <text x="100" y="310" fill="#a8b6bf" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="31">Local-first indexed reading for large knowledge vaults.</text>
+  <g transform="translate(100 390)">
+    <rect width="206" height="48" rx="24" fill="#1e3038" stroke="#38505b"/>
+    <text x="26" y="31" fill="#d9f7ff" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="19" font-weight="700">Markdown</text>
+    <rect x="228" width="164" height="48" rx="24" fill="#1e3038" stroke="#38505b"/>
+    <text x="254" y="31" fill="#d9f7ff" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="19" font-weight="700">SQLite</text>
+    <rect x="414" width="172" height="48" rx="24" fill="#1e3038" stroke="#38505b"/>
+    <text x="440" y="31" fill="#d9f7ff" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="19" font-weight="700">Tantivy</text>
+    <rect x="608" width="216" height="48" rx="24" fill="#72efdd"/>
+    <text x="634" y="31" fill="#082224" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="19" font-weight="800">Local-first</text>
+  </g>
+</svg>

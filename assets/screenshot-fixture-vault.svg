@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900" role="img" aria-labelledby="title desc">
+  <title id="title">Representative Mega Vault Viewer screenshot using fixture data</title>
+  <desc id="desc">A representative desktop screenshot using synthetic fixture vault names and notes.</desc>
+  <rect width="1440" height="900" fill="#0b0f12"/>
+  <rect x="32" y="34" width="1376" height="832" rx="18" fill="#151b1f" stroke="#34444d"/>
+  <rect x="32" y="34" width="1376" height="54" rx="18" fill="#0f1418"/>
+  <circle cx="62" cy="61" r="8" fill="#ff5f57"/>
+  <circle cx="90" cy="61" r="8" fill="#ffbd2e"/>
+  <circle cx="118" cy="61" r="8" fill="#28c840"/>
+  <text x="150" y="69" fill="#d8dee4" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="18" font-weight="650">Mega Vault Viewer</text>
+  <rect x="32" y="88" width="340" height="778" fill="#12181c"/>
+  <line x1="372" y1="88" x2="372" y2="866" stroke="#29343b"/>
+  <text x="66" y="136" fill="#8fa1ad" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="15" font-weight="750" letter-spacing="2">CURRENT VAULT</text>
+  <text x="66" y="172" fill="#f4f7f9" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="28" font-weight="760">fixture-vault</text>
+  <text x="66" y="202" fill="#9babb5" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="17">126 docs, 412 links</text>
+  <rect x="66" y="232" width="270" height="46" rx="8" fill="#0c1115" stroke="#33424b"/>
+  <text x="84" y="261" fill="#b9c5cc" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="17">Search title, body, slug</text>
+  <g transform="translate(66 312)">
+    <text x="0" y="0" fill="#8fa1ad" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="15" font-weight="750" letter-spacing="2">FILES</text>
+    <rect y="24" width="270" height="68" rx="9" fill="#182229" stroke="#34444d"/>
+    <text x="16" y="52" fill="#f4f7f9" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="18" font-weight="720">daily-note.md</text>
+    <text x="16" y="78" fill="#93a4af" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="14">10_notes/2026-06</text>
+    <rect y="104" width="270" height="68" rx="9" fill="#10171b" stroke="#293840"/>
+    <text x="16" y="132" fill="#dfe7eb" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="18" font-weight="720">project-brief.md</text>
+    <text x="16" y="158" fill="#93a4af" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="14">system/projects</text>
+    <rect y="184" width="270" height="68" rx="9" fill="#10171b" stroke="#293840"/>
+    <text x="16" y="212" fill="#dfe7eb" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="18" font-weight="720">source-data.json</text>
+    <text x="16" y="238" fill="#93a4af" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="14">20_files/2026-06</text>
+  </g>
+  <g transform="translate(420 130)">
+    <text x="0" y="0" fill="#8fa1ad" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="15" font-weight="750" letter-spacing="2">OPENED DAILY-NOTE.MD</text>
+    <text x="0" y="48" fill="#f8fafc" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="42" font-weight="780">Daily Note</text>
+    <text x="0" y="84" fill="#9babbb" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="20">10_notes/2026-06/daily-note.md</text>
+    <line x1="0" y1="126" x2="910" y2="126" stroke="#29343b"/>
+    <text x="0" y="188" fill="#f4f7f9" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="30" font-weight="740">Today</text>
+    <text x="0" y="236" fill="#d8dee4" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="23">Review project notes, inspect source files, and follow local WikiLinks.</text>
+    <text x="0" y="284" fill="#d8dee4" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="23">Search and navigation are powered by rebuildable local indexes.</text>
+    <text x="0" y="356" fill="#f4f7f9" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="28" font-weight="740">Links</text>
+    <rect x="0" y="386" width="168" height="42" rx="21" fill="#1e3038" stroke="#38505b"/>
+    <text x="22" y="413" fill="#d9f7ff" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="18">project-brief</text>
+    <rect x="188" y="386" width="162" height="42" rx="21" fill="#1e3038" stroke="#38505b"/>
+    <text x="210" y="413" fill="#d9f7ff" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="18">source-data</text>
+  </g>
+</svg>
