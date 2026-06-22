@@ -19,7 +19,7 @@ git diff --check
 Also run the public repository readiness check when preparing a public GitHub release:
 
 ```bash
-python3 /Users/viggomeesters/Dev/viggo-agent-skills/scripts/repo_complete_bootstrap.py --public --mode check --path /Users/viggomeesters/Dev/mega-vault-viewer
+python3 /path/to/repo_complete_bootstrap.py --public --mode check --path .
 ```
 
 The repository readiness helper is external to this repository. It is used as a maintainer gate, not as runtime product code.

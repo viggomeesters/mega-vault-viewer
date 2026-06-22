@@ -5,4 +5,26 @@
 /apps/desktop/src-tauri/target/
 /apps/desktop/src-tauri/gen/
 /.DS_Store
+.DS_Store
 *.log
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Rebuildable Mega Vault Viewer runtime state
+/mvv-state/
+/.mvv-state/
+/.mega-vault-viewer-state/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.db
+/tantivy/
+**/tantivy/
+
+# Local app bundles and packaging scratch space
+*.app
+*.dmg
+*.pkg

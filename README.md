@@ -62,6 +62,8 @@ Mega Vault Viewer is local-first:
 - Runtime state is stored outside the vault by default.
 - Repository fixtures and screenshots must not contain private notes, client data, or personal vault paths.
 
+See [docs/public-readiness.md](docs/public-readiness.md) for the public scrub notes.
+
 Normal desktop runs store runtime state under the platform app data directory, for example:
 
 ```text

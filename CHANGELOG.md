@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Release guide for local app builds, versioning, tags, and unsigned artifact caveats.
 - Public-safe hero, social preview, and representative screenshot assets.
 - Visual asset refresh workflow using fixture or synthetic data only.
+- Public readiness scrub notes and hardened ignore rules for runtime state, local environment files, and app bundles.
 
 ### Notes
 
