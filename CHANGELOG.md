@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## Unreleased
 
+No unreleased changes yet.
+
+## [0.1.0] - 2026-06-22
+
 ### Added
 
 - Public repository documentation baseline.
@@ -15,6 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Public-safe hero, social preview, and representative screenshot assets.
 - Visual asset refresh workflow using fixture or synthetic data only.
 - Public readiness scrub notes and hardened ignore rules for runtime state, local environment files, and app bundles.
+- GitHub publishing metadata and v0.1.0 release notes.
 
 ### Notes
 

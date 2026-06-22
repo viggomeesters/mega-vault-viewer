@@ -154,6 +154,8 @@ Until a release says otherwise, builds are unsigned local builds.
 
 See [docs/release.md](docs/release.md) for the full release runbook.
 
+Public GitHub publishing metadata is recorded in [docs/github-publishing.md](docs/github-publishing.md).
+
 ## Security
 
 Please report security issues privately. See [SECURITY.md](SECURITY.md).
