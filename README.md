@@ -38,7 +38,7 @@ For a safe demo vault, use:
 fixtures/demo-vault
 ```
 
-See [docs/visual-assets.md](docs/visual-assets.md) for the screenshot refresh workflow.
+See [docs/visual-assets.md](docs/visual-assets.md) for the visual asset gallery and refresh workflow.
 
 ## Architecture
 

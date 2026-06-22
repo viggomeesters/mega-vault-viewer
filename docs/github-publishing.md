@@ -1,38 +1,58 @@
 # GitHub Publishing
 
-This document records the intended public GitHub metadata and release policy for Mega Vault Viewer.
+Mega Vault Viewer is published as a public GitHub repository.
 
-## Repository
+## Published Repository
 
 - Owner/name: `viggomeesters/mega-vault-viewer`
 - Visibility: public
 - Default branch: `main`
 - URL: `https://github.com/viggomeesters/mega-vault-viewer`
 - Description: `Local-first macOS viewer for large mixed-format Markdown knowledge vaults.`
-- Homepage: none for now. Mega Vault Viewer is a desktop app and does not yet have a hosted product site.
-- Topics:
-  - `local-first`
-  - `tauri`
-  - `rust`
-  - `markdown`
-  - `knowledge-base`
-  - `search`
-  - `macos`
+- Homepage: none. Mega Vault Viewer is a desktop app and does not have a hosted product site.
+- Current release: `v0.1.0`
+- Release URL: `https://github.com/viggomeesters/mega-vault-viewer/releases/tag/v0.1.0`
+- Release asset: `Mega-Vault-Viewer-v0.1.0-macos-unsigned.zip`
 
-## Publish Commands
+## Repository Topics
 
-Create the public repository and push the current repository state:
+- `local-first`
+- `tauri`
+- `rust`
+- `markdown`
+- `knowledge-base`
+- `search`
+- `macos`
+
+## Public Visuals
+
+The public README and social assets are fixture-safe:
+
+- README hero: `assets/hero.svg`
+- Social preview asset: `assets/social-preview.svg`
+- Fixture screenshot: `assets/screenshot-fixture-vault.svg`
+
+See [visual-assets.md](visual-assets.md) for rendered previews.
+
+## Release Policy
+
+The v0.1.0 artifact is intentionally labeled `unsigned`. Do not imply signing, notarization, auto-update, or installer support until those features exist.
+
+Public releases should stay evidence-backed:
+
+1. Run the verification suite from [release.md](release.md).
+2. Build the macOS app bundle.
+3. Package the unsigned app zip with an explicit `unsigned` filename.
+4. Publish GitHub release notes from `docs/release-notes/`.
+5. Re-run the public privacy scrub before attaching artifacts.
+
+## Maintenance Commands
+
+These commands are for future metadata or release maintenance, not first-time publication.
+
+Update GitHub topics:
 
 ```bash
-gh repo create viggomeesters/mega-vault-viewer \
-  --public \
-  --description "Local-first macOS viewer for large mixed-format Markdown knowledge vaults." \
-  --source=. \
-  --remote=origin
-
-git branch -f main HEAD
-git push -u origin main
-git push origin codex/mega-vault-viewer-mvp
 gh repo edit viggomeesters/mega-vault-viewer \
   --add-topic local-first \
   --add-topic tauri \
@@ -43,23 +63,13 @@ gh repo edit viggomeesters/mega-vault-viewer \
   --add-topic macos
 ```
 
-## Release Command
-
-Create an unsigned macOS app zip from a verified local build:
+Create a future unsigned macOS release after a verified local build:
 
 ```bash
 npm run desktop:build
-ditto -c -k --keepParent "target/release/bundle/macos/Mega Vault Viewer.app" /tmp/Mega-Vault-Viewer-v0.1.0-macos-unsigned.zip
-gh release create v0.1.0 /tmp/Mega-Vault-Viewer-v0.1.0-macos-unsigned.zip \
+ditto -c -k --keepParent "target/release/bundle/macos/Mega Vault Viewer.app" /tmp/Mega-Vault-Viewer-vNEXT-macos-unsigned.zip
+gh release create vNEXT /tmp/Mega-Vault-Viewer-vNEXT-macos-unsigned.zip \
   --repo viggomeesters/mega-vault-viewer \
-  --title "Mega Vault Viewer v0.1.0" \
-  --notes-file docs/release-notes/v0.1.0.md
+  --title "Mega Vault Viewer vNEXT" \
+  --notes-file docs/release-notes/vNEXT.md
 ```
-
-The release artifact is intentionally labeled `unsigned`. Do not imply signing, notarization, auto-update, or installer support until those features exist.
-
-## Published Release
-
-- Tag: `v0.1.0`
-- URL: `https://github.com/viggomeesters/mega-vault-viewer/releases/tag/v0.1.0`
-- Asset: `Mega-Vault-Viewer-v0.1.0-macos-unsigned.zip`

@@ -18,7 +18,7 @@ The scan looks for private keys, common token patterns, secret assignments, pers
 - No tracked generated runtime index, build output, or dependency cache is part of the repository.
 - Public visuals use fixture or synthetic data only.
 - `.gitignore` excludes local environment files, runtime SQLite/WAL/SHM files, Tantivy indexes, logs, app bundles, and OS artifacts.
-- A local absolute maintainer path was found in release documentation during the scrub and replaced with a placeholder command.
+- No tracked docs or assets contain local absolute maintainer paths after the release documentation scrub.
 - The external repo-complete helper detects this workspace as `node` and expects a root `src/` folder. That is accepted as a checker false positive for this Tauri/Rust monorepo: source lives in `apps/desktop/src`, `apps/desktop/src-tauri`, and `crates/mvv-core/src`.
 
 ## Rule

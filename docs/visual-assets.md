@@ -12,7 +12,7 @@ Public visuals must be safe to publish. Do not use screenshots from a private va
 
 ![Mega Vault Viewer social preview](../assets/social-preview.svg)
 
-`assets/social-preview.svg` is the GitHub/social preview candidate.
+`assets/social-preview.svg` is the GitHub/social preview asset.
 
 ## Fixture Screenshot
 
@@ -29,7 +29,7 @@ Public visuals must be safe to publish. Do not use screenshots from a private va
 5. Save final assets under `assets/`.
 6. Run the privacy scan from the public readiness task before publishing.
 
-For a future real screenshot, build or run the desktop app with fixture data:
+To refresh the fixture screenshot, build or run the desktop app with fixture data:
 
 ```bash
 MEGA_VAULT_VIEWER_DEFAULT_VAULT_PATH="$PWD/fixtures/demo-vault" npm run desktop:dev
