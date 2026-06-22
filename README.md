@@ -123,6 +123,7 @@ fixtures/              Synthetic test vaults and reader fixtures
 Useful commands:
 
 ```bash
+cargo fmt --all -- --check
 cargo test --workspace
 cargo clippy --all-targets -- -D warnings
 npm test --if-present
@@ -142,6 +143,8 @@ Releases should be explicit and evidence-backed:
 5. Attach release artifacts only when signing/notarization status is clear.
 
 Until a release says otherwise, builds are unsigned local builds.
+
+See [docs/release.md](docs/release.md) for the full release runbook.
 
 ## Security
 
