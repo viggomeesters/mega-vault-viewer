@@ -2,11 +2,23 @@
 
 Public visuals must be safe to publish. Do not use screenshots from a private vault, customer workspace, personal note collection, or machine-local path.
 
-## Current Assets
+## README Hero
 
-- `assets/hero.svg` - conceptual README hero image, not a literal product screenshot.
-- `assets/social-preview.svg` - conceptual GitHub/social preview candidate.
-- `assets/screenshot-fixture-vault.svg` - representative app screenshot with synthetic fixture data.
+![Mega Vault Viewer conceptual README hero](../assets/hero.svg)
+
+`assets/hero.svg` is the conceptual README hero. It is intentionally not a literal product screenshot, so it stays sharp when GitHub scales it down.
+
+## Social Preview
+
+![Mega Vault Viewer social preview](../assets/social-preview.svg)
+
+`assets/social-preview.svg` is the GitHub/social preview candidate.
+
+## Fixture Screenshot
+
+![Representative Mega Vault Viewer screenshot using fixture data](../assets/screenshot-fixture-vault.svg)
+
+`assets/screenshot-fixture-vault.svg` is the representative app screenshot. It uses synthetic fixture data only.
 
 ## Refresh Workflow
 
