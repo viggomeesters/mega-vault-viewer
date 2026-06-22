@@ -9,6 +9,7 @@
     "desktop:dev": "npm --workspace apps/desktop run tauri:dev",
     "desktop:build": "npm --workspace apps/desktop run tauri:build",
     "build": "npm --workspace apps/desktop run build && cargo build --workspace",
-    "test": "npm --workspace apps/desktop run test && cargo test --workspace"
+    "test": "npm --workspace apps/desktop run test && cargo test --workspace",
+    "check": "npm test --if-present && npm run build --if-present && cargo fmt --all -- --check && cargo clippy --all-targets -- -D warnings && git diff --check"
   }
 }

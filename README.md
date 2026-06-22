@@ -88,7 +88,8 @@ There is no packaged public installer yet. For now, build from source.
 
 Prerequisites:
 
-- macOS
+- macOS for desktop app packaging and release builds
+- WSL2 or Linux for core development and checks
 - Rust stable toolchain
 - Node.js and npm
 - Tauri system dependencies for macOS
@@ -105,7 +106,7 @@ Run the desktop app in development:
 npm run desktop:dev
 ```
 
-Build the macOS app bundle:
+Build the macOS app bundle on macOS:
 
 ```bash
 npm run desktop:build
@@ -130,15 +131,37 @@ docs/                  Architecture and release notes
 fixtures/              Synthetic test vaults and reader fixtures
 ```
 
+### WSL Development
+
+WSL2 is a supported development environment for core work, TypeScript UI work, docs, fixtures, and public repository checks. Clone the repository inside the Linux filesystem for reliable file watching and build performance:
+
+```bash
+mkdir -p ~/dev
+cd ~/dev
+git clone https://github.com/viggomeesters/mega-vault-viewer.git
+cd mega-vault-viewer
+npm install
+npm run check
+```
+
+Avoid cloning under `/mnt/c` for regular development. Use fixture vaults on WSL instead of machine-specific macOS or iCloud paths:
+
+```bash
+MEGA_VAULT_VIEWER_DEFAULT_VAULT_PATH="$PWD/fixtures/demo-vault" npm run desktop:dev
+```
+
+The final macOS `.app` bundle, release packaging, signing, notarization, and validation against a real macOS/iCloud vault should be done on macOS.
+
 Useful commands:
 
 ```bash
+npm run check
 cargo fmt --all -- --check
 cargo test --workspace
 cargo clippy --all-targets -- -D warnings
 npm test --if-present
 npm run build --if-present
-npm run desktop:build
+npm run desktop:build # macOS app bundle only
 git diff --check
 ```
 

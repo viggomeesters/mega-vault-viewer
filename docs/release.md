@@ -4,7 +4,13 @@ Mega Vault Viewer releases are explicit and evidence-backed. The current project
 
 ## Release Readiness Checklist
 
-Before tagging a release:
+For cross-platform development checks, including WSL2:
+
+```bash
+npm run check
+```
+
+Before tagging a macOS release, run the full release gate on macOS:
 
 ```bash
 cargo fmt --all -- --check
@@ -33,7 +39,7 @@ The repository readiness helper is external to this repository. It is used as a 
 
 ## Build Artifact
 
-Create the local macOS app bundle:
+Create the local macOS app bundle on macOS:
 
 ```bash
 npm run desktop:build
@@ -46,6 +52,8 @@ target/release/bundle/macos/Mega Vault Viewer.app
 ```
 
 Do not commit files under `target/`.
+
+WSL2 is suitable for source development and verification, but release packaging remains macOS-only until the project explicitly supports Linux or Windows desktop artifacts.
 
 ## Tagging
 
