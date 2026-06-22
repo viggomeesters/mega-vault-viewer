@@ -720,6 +720,21 @@ a:focus-visible {
   white-space: nowrap;
 }
 
+.editor-meta {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.editor-save-state,
+.editor-meta small {
+  color: #7fd4ff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .editor-actions {
   display: flex;
   gap: 8px;

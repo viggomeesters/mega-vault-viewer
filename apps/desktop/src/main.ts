@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { headerEditToggleAction, headerEditToggleLabel, isEditDirty, type HeaderEditToggleState } from "./edit-session";
 import "./styles.css";
 
 type VaultStats = {
@@ -162,8 +163,13 @@ let currentSearchQuery = "";
 let isRefreshing = false;
 let isEditing = false;
 let isSaving = false;
+let isAutoSaving = false;
 let editSource = "";
+let loadedEditSource = "";
 let editError = "";
+let autosaveTimer: number | null = null;
+let autosavePromise: Promise<void> | null = null;
+let editSessionId = 0;
 let lastRefreshAt: Date | null = null;
 let refreshTimer: number | null = null;
 let watchDebounceTimer: number | null = null;
@@ -173,6 +179,7 @@ let indexHealth: IndexHealth = "idle";
 
 const AUTO_REFRESH_MS = 10 * 60 * 1000;
 const WATCH_DEBOUNCE_MS = 1200;
+const EDIT_AUTOSAVE_DEBOUNCE_MS = 900;
 
 const formatScore = new Intl.NumberFormat("en", {
   maximumFractionDigits: 2,
@@ -216,7 +223,7 @@ function render() {
             <div class="document-action-row">
               ${
                 currentDocument?.can_edit_source
-                  ? `<button id="edit-toggle-button" class="secondary-button edit-toggle-button ${isEditing ? "is-active" : ""}" type="button" ${isSaving ? "disabled" : ""}>${isEditing ? "Read" : "Edit"}</button>`
+                  ? `<button id="edit-toggle-button" class="secondary-button edit-toggle-button ${isEditing ? "is-active" : ""}" type="button" ${isSaving ? "disabled" : ""}>${escapeHtml(headerEditToggleLabel(currentHeaderEditToggleState()))}</button>`
                   : ""
               }
               ${
@@ -331,7 +338,10 @@ function renderDocumentContent() {
     <section class="editor-pane" aria-label="Markdown editor">
       <textarea id="note-editor" spellcheck="false" ${isSaving ? "disabled" : ""}>${escapeHtml(editSource)}</textarea>
       <div class="editor-footer">
-        <p>${escapeHtml(currentDocument.relative_path)}</p>
+        <div class="editor-meta">
+          <p>${escapeHtml(currentDocument.relative_path)}</p>
+          <small id="editor-save-state">${escapeHtml(editorSaveStateText())}</small>
+        </div>
         <div class="editor-actions">
           <button id="cancel-edit-button" class="secondary-button" type="button" ${isSaving ? "disabled" : ""}>Cancel</button>
           <button id="save-edit-button" type="button" ${isSaving ? "disabled" : ""}>${isSaving ? "Saving..." : "Save"}</button>
@@ -674,11 +684,16 @@ function bindEvents() {
   document.querySelector<HTMLButtonElement>("#back-button")?.addEventListener("click", navigateBack);
   document.querySelector<HTMLButtonElement>("#forward-button")?.addEventListener("click", navigateForward);
   document.querySelector<HTMLButtonElement>("#edit-toggle-button")?.addEventListener("click", () => {
-    if (isEditing) {
-      cancelEditMode();
-      return;
+    const action = headerEditToggleAction(currentHeaderEditToggleState());
+    if (action === "enter-edit") {
+      void enterEditMode();
     }
-    void enterEditMode();
+    if (action === "save-and-read") {
+      void saveEditMode();
+    }
+    if (action === "read") {
+      leaveCleanEditMode();
+    }
   });
   document.querySelector<HTMLButtonElement>("#open-system-button")?.addEventListener("click", () => {
     void openCurrentItemInSystem();
@@ -688,6 +703,9 @@ function bindEvents() {
   });
   document.querySelector<HTMLTextAreaElement>("#note-editor")?.addEventListener("input", (event) => {
     editSource = (event.target as HTMLTextAreaElement).value;
+    editError = "";
+    scheduleAutosave();
+    refreshEditorSaveState();
   });
   document.querySelector<HTMLButtonElement>("#save-edit-button")?.addEventListener("click", () => {
     void saveEditMode();
@@ -1019,6 +1037,8 @@ async function enterEditMode() {
     editSource = await invoke<string>("read_document_source", {
       relativePath: currentDocument.relative_path,
     });
+    loadedEditSource = editSource;
+    editSessionId += 1;
     isEditing = true;
     statusText = `Editing ${currentDocument.filename}`;
   } catch (error) {
@@ -1028,11 +1048,23 @@ async function enterEditMode() {
   render();
 }
 
+function leaveCleanEditMode() {
+  if (!isEditing || isSaving) {
+    return;
+  }
+
+  clearAutosaveTimer();
+  resetEditState();
+  statusText = currentDocument ? `Opened ${currentDocument.filename}` : "Ready";
+  render();
+}
+
 function cancelEditMode() {
   if (!isEditing || isSaving) {
     return;
   }
 
+  clearAutosaveTimer();
   resetEditState();
   statusText = currentDocument ? `Opened ${currentDocument.filename}` : "Ready";
   render();
@@ -1043,17 +1075,22 @@ async function saveEditMode() {
     return;
   }
 
+  clearAutosaveTimer();
+  await waitForAutosave();
+
+  if (!currentDocument || !isEditing || !isEditDirty(currentHeaderEditToggleState())) {
+    leaveCleanEditMode();
+    return;
+  }
+
   const relativePath = currentDocument.relative_path;
+  const source = editSource;
   try {
     isSaving = true;
     editError = "";
     statusText = `Saving ${currentDocument.filename}`;
     render();
-    const snapshot = await invoke<SaveSnapshot>("save_document_source", {
-      vaultPath,
-      relativePath,
-      source: editSource,
-    });
+    const snapshot = await persistEditSource(relativePath, source);
     currentStats = snapshot.stats;
     currentDocument = snapshot.item;
     fileBrowserSnapshot = await invoke<FileBrowserSnapshot>("file_browser");
@@ -1061,6 +1098,7 @@ async function saveEditMode() {
     forwardStack = [];
     lastRefreshAt = new Date();
     indexHealth = "watching";
+    loadedEditSource = source;
     resetEditState();
     statusText = `Saved ${currentDocument.filename}`;
   } catch (error) {
@@ -1109,10 +1147,137 @@ function applyOpenedDocument(document: VaultItemView, status: string, recordHist
 }
 
 function resetEditState() {
+  clearAutosaveTimer();
+  editSessionId += 1;
   isEditing = false;
   isSaving = false;
+  isAutoSaving = false;
   editSource = "";
+  loadedEditSource = "";
   editError = "";
+}
+
+function currentHeaderEditToggleState(): HeaderEditToggleState {
+  return {
+    isEditing,
+    isSaving,
+    editSource,
+    loadedSource: loadedEditSource,
+  };
+}
+
+function refreshEditToggleLabel() {
+  const button = document.querySelector<HTMLButtonElement>("#edit-toggle-button");
+  if (button) {
+    button.textContent = headerEditToggleLabel(currentHeaderEditToggleState());
+  }
+}
+
+function refreshEditorSaveState() {
+  refreshEditToggleLabel();
+  const saveState = document.querySelector<HTMLElement>("#editor-save-state");
+  if (saveState) {
+    saveState.textContent = editorSaveStateText();
+  }
+}
+
+function editorSaveStateText() {
+  if (editError) {
+    return "Autosave failed";
+  }
+  if (isSaving) {
+    return "Saving...";
+  }
+  if (isAutoSaving) {
+    return "Autosaving...";
+  }
+  if (autosaveTimer !== null) {
+    return "Unsaved changes";
+  }
+  if (isEditDirty(currentHeaderEditToggleState())) {
+    return "Unsaved changes";
+  }
+
+  return isEditing ? "Saved" : "";
+}
+
+function scheduleAutosave() {
+  clearAutosaveTimer();
+  if (!currentDocument || !isEditing || isSaving || !isEditDirty(currentHeaderEditToggleState())) {
+    return;
+  }
+
+  autosaveTimer = window.setTimeout(() => {
+    autosaveTimer = null;
+    autosavePromise = autoSaveEdit();
+    void autosavePromise.finally(() => {
+      autosavePromise = null;
+    });
+  }, EDIT_AUTOSAVE_DEBOUNCE_MS);
+}
+
+function clearAutosaveTimer() {
+  if (autosaveTimer !== null) {
+    window.clearTimeout(autosaveTimer);
+    autosaveTimer = null;
+  }
+}
+
+async function waitForAutosave() {
+  if (autosavePromise) {
+    await autosavePromise;
+  }
+}
+
+async function autoSaveEdit() {
+  if (!currentDocument || !isEditing || isSaving || isAutoSaving || !isEditDirty(currentHeaderEditToggleState())) {
+    return;
+  }
+
+  const sessionId = editSessionId;
+  const relativePath = currentDocument.relative_path;
+  const filename = currentDocument.filename;
+  const source = editSource;
+
+  try {
+    isAutoSaving = true;
+    editError = "";
+    statusText = `Autosaving ${filename}`;
+    refreshEditorSaveState();
+    const snapshot = await persistEditSource(relativePath, source);
+    if (sessionId !== editSessionId || !currentDocument || currentDocument.relative_path !== relativePath) {
+      return;
+    }
+
+    currentStats = snapshot.stats;
+    currentDocument = snapshot.item;
+    fileBrowserSnapshot = await invoke<FileBrowserSnapshot>("file_browser");
+    loadedEditSource = source;
+    lastRefreshAt = new Date();
+    indexHealth = "watching";
+    statusText = editSource === loadedEditSource ? `Saved ${filename}` : `Editing ${filename}`;
+  } catch (error) {
+    if (sessionId === editSessionId) {
+      editError = String(error);
+      statusText = "Autosave failed";
+    }
+  } finally {
+    if (sessionId === editSessionId) {
+      isAutoSaving = false;
+      refreshEditorSaveState();
+      if (!editError && isEditDirty(currentHeaderEditToggleState())) {
+        scheduleAutosave();
+      }
+    }
+  }
+}
+
+function persistEditSource(relativePath: string, source: string) {
+  return invoke<SaveSnapshot>("save_document_source", {
+    vaultPath,
+    relativePath,
+    source,
+  });
 }
 
 function startAutoRefresh() {
