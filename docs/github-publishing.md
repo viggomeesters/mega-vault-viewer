@@ -7,6 +7,7 @@ This document records the intended public GitHub metadata and release policy for
 - Owner/name: `viggomeesters/mega-vault-viewer`
 - Visibility: public
 - Default branch: `main`
+- URL: `https://github.com/viggomeesters/mega-vault-viewer`
 - Description: `Local-first macOS viewer for large mixed-format Markdown knowledge vaults.`
 - Homepage: none for now. Mega Vault Viewer is a desktop app and does not yet have a hosted product site.
 - Topics:
@@ -56,3 +57,9 @@ gh release create v0.1.0 /tmp/Mega-Vault-Viewer-v0.1.0-macos-unsigned.zip \
 ```
 
 The release artifact is intentionally labeled `unsigned`. Do not imply signing, notarization, auto-update, or installer support until those features exist.
+
+## Published Release
+
+- Tag: `v0.1.0`
+- URL: `https://github.com/viggomeesters/mega-vault-viewer/releases/tag/v0.1.0`
+- Asset: `Mega-Vault-Viewer-v0.1.0-macos-unsigned.zip`

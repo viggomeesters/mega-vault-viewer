@@ -119,6 +119,8 @@ target/release/bundle/macos/
 
 ## Development
 
+The repository is a small workspace: Rust owns indexing/search/runtime behavior, while the Tauri desktop app owns the macOS shell and TypeScript UI. Most product changes should include fixture coverage in `crates/mvv-core/tests` or focused TypeScript tests under `apps/desktop/src`.
+
 Repository layout:
 
 ```text
