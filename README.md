@@ -120,10 +120,19 @@ The generated `.app` bundle is written under:
 target/release/bundle/macos/
 ```
 
-Build Windows installers on Windows:
+Build Windows installers on Windows with the standard MSVC toolchain:
 
 ```powershell
 npm run desktop:build:windows
+```
+
+Build Windows installers on Windows with the GNU/MinGW toolchain:
+
+```powershell
+$env:Path = "C:\msys64\mingw64\bin;$env:USERPROFILE\.cargo\bin;$env:Path"
+$env:RUSTUP_TOOLCHAIN = "stable-x86_64-pc-windows-gnu"
+$env:CARGO_BUILD_TARGET = "x86_64-pc-windows-gnu"
+npm run desktop:build:windows:gnu
 ```
 
 The generated installers are written under:

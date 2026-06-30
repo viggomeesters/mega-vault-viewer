@@ -12,7 +12,8 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build --bundles app",
-    "tauri:build:windows": "tauri build --bundles nsis,msi"
+    "tauri:build:windows": "tauri build --bundles nsis,msi",
+    "tauri:build:windows:gnu": "tauri build --target x86_64-pc-windows-gnu --bundles nsis,msi"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.9.0",
