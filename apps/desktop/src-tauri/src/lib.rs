@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -241,11 +242,25 @@ fn open_item_in_system(state: State<'_, AppState>, relative_path: String) -> Res
     let item = runtime
         .open_item_by_relative_path(&relative_path)
         .map_err(|error| error.to_string())?;
-    std::process::Command::new("open")
-        .arg(&item.path)
-        .spawn()
-        .map_err(|error| format!("open in system failed: {error}"))?;
+    open_path_in_system(&item.path).map_err(|error| format!("open in system failed: {error}"))?;
     Ok(())
+}
+
+fn open_path_in_system(path: &Path) -> std::io::Result<()> {
+    let (program, args) = system_open_command_parts(std::env::consts::OS, path);
+    std::process::Command::new(program)
+        .args(args)
+        .spawn()
+        .map(|_| ())
+}
+
+fn system_open_command_parts(os: &str, path: &Path) -> (&'static str, Vec<String>) {
+    let path = path.to_string_lossy().to_string();
+    match os {
+        "macos" => ("open", vec![path]),
+        "windows" => ("cmd", vec!["/C".into(), "start".into(), "".into(), path]),
+        _ => ("xdg-open", vec![path]),
+    }
 }
 
 #[tauri::command]
@@ -401,5 +416,37 @@ mod tests {
         );
         assert_eq!(explicit_state_dir(Some("".into())), None);
         assert_eq!(explicit_state_dir(None), None);
+    }
+
+    #[test]
+    fn uses_platform_native_open_commands() {
+        let path = PathBuf::from(r"C:\Users\Viggo\Syncthing\vault\records\tasks.jsonl");
+
+        assert_eq!(
+            system_open_command_parts("windows", &path),
+            (
+                "cmd",
+                vec![
+                    "/C".into(),
+                    "start".into(),
+                    "".into(),
+                    r"C:\Users\Viggo\Syncthing\vault\records\tasks.jsonl".into(),
+                ]
+            )
+        );
+        assert_eq!(
+            system_open_command_parts("macos", &path),
+            (
+                "open",
+                vec![r"C:\Users\Viggo\Syncthing\vault\records\tasks.jsonl".into()]
+            )
+        );
+        assert_eq!(
+            system_open_command_parts("linux", &path),
+            (
+                "xdg-open",
+                vec![r"C:\Users\Viggo\Syncthing\vault\records\tasks.jsonl".into()]
+            )
+        );
     }
 }

@@ -1,0 +1,42 @@
+name: Windows
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  windows-build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Mega Vault Viewer
+        uses: actions/checkout@v4
+
+      - name: Checkout Minimal AI Vault Starter sibling
+        uses: actions/checkout@v4
+        with:
+          repository: viggomeesters/minimal-ai-vault-starter
+          path: minimal-ai-vault-starter
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check frontend and Rust workspace
+        run: npm run check
+
+      - name: Smoke Minimal AI Vault Starter
+        run: npm run smoke:minimal-starter
+
+      - name: Build Windows installers
+        run: npm run desktop:build:windows

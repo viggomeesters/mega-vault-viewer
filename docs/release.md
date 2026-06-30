@@ -53,7 +53,7 @@ target/release/bundle/macos/Mega Vault Viewer.app
 
 Do not commit files under `target/`.
 
-WSL2 is suitable for source development and verification, but release packaging remains macOS-only until the project explicitly supports Linux or Windows desktop artifacts.
+WSL2 is suitable for source development and verification. Release packaging is host-specific: macOS `.app` bundles should be built on macOS, and Windows `nsis`/`msi` installers should be built on Windows.
 
 ## Tagging
 

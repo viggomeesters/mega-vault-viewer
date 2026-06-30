@@ -89,11 +89,12 @@ There is no packaged public installer yet. For now, build from source.
 
 Prerequisites:
 
-- macOS for desktop app packaging and release builds
+- macOS for `.app` packaging and notarized release validation
+- Windows 10/11 for Windows installer packaging (`nsis`/`msi`)
 - WSL2 or Linux for core development and checks
 - Rust stable toolchain
 - Node.js and npm
-- Tauri system dependencies for macOS
+- Tauri system dependencies for the target desktop OS
 
 Install dependencies:
 
@@ -117,6 +118,25 @@ The generated `.app` bundle is written under:
 
 ```text
 target/release/bundle/macos/
+```
+
+Build Windows installers on Windows:
+
+```powershell
+npm run desktop:build:windows
+```
+
+The generated installers are written under:
+
+```text
+target/release/bundle/nsis/
+target/release/bundle/msi/
+```
+
+Smoke the viewer against the sibling Minimal AI Vault Starter checkout:
+
+```bash
+npm run smoke:minimal-starter
 ```
 
 ## Development
@@ -162,7 +182,9 @@ cargo test --workspace
 cargo clippy --all-targets -- -D warnings
 npm test --if-present
 npm run build --if-present
-npm run desktop:build # macOS app bundle only
+npm run desktop:build
+npm run desktop:build:windows # Windows host only
+npm run smoke:minimal-starter # with ../minimal-ai-vault-starter checkout
 git diff --check
 ```
 
