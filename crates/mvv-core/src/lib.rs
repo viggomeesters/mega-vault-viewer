@@ -119,6 +119,40 @@ pub struct VaultGroupEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StarterRecordCollection {
+    pub file: String,
+    pub schema: Option<String>,
+    pub count: usize,
+    pub record_type: Option<String>,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StarterVaultSummary {
+    pub name: String,
+    pub promise: String,
+    pub human_owned: Vec<String>,
+    pub canonical: Vec<String>,
+    pub generated: Vec<String>,
+    pub record_collections: Vec<StarterRecordCollection>,
+    pub total_records: usize,
+    pub human_note_count: usize,
+    pub generated_view_count: usize,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct StarterContract {
+    name: Option<String>,
+    promise: Option<String>,
+    #[serde(default)]
+    human_owned: Vec<String>,
+    #[serde(default)]
+    canonical: Vec<String>,
+    #[serde(default)]
+    generated: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FileBrowserSnapshot {
     pub folders: Vec<FolderEntry>,
     pub newest_files: Vec<FileBrowserItem>,
@@ -128,6 +162,7 @@ pub struct FileBrowserSnapshot {
     pub timeline_items: Vec<FileBrowserItem>,
     pub entities: Vec<VaultGroupEntry>,
     pub projects: Vec<VaultGroupEntry>,
+    pub starter_vault: Option<StarterVaultSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -480,6 +515,7 @@ impl VaultRuntime {
         let timeline_items = timeline_items(&files);
         let entities = grouped_metadata_entries(&conn, GroupKind::Entity)?;
         let projects = grouped_metadata_entries(&conn, GroupKind::Project)?;
+        let starter_vault = starter_vault_summary(&self.root, &files)?;
         let mut newest_files = files.clone();
         newest_files.sort_by_key(|file| std::cmp::Reverse(file.created_at.unwrap_or(0)));
         newest_files.truncate(40);
@@ -497,6 +533,7 @@ impl VaultRuntime {
             timeline_items,
             entities,
             projects,
+            starter_vault,
         })
     }
 
@@ -507,8 +544,9 @@ impl VaultRuntime {
         let path = self.canonical_vault_file_path(&file.absolute_path)?;
 
         if file.kind == "markdown" {
+            let can_edit_source = can_edit_markdown_source(&self.root, relative_path);
             return match self.open_by_relative_path(relative_path) {
-                Ok(document) => Ok(vault_item_from_document(document, &file)),
+                Ok(document) => Ok(vault_item_from_document(document, &file, can_edit_source)),
                 Err(error) => Ok(vault_item_error(
                     &file,
                     &path,
@@ -561,6 +599,11 @@ impl VaultRuntime {
         relative_path: &str,
         source: &str,
     ) -> Result<()> {
+        if !can_edit_markdown_source(&self.root, relative_path) {
+            anyhow::bail!(
+                "document is protected by the starter vault human-owned contract: {relative_path}"
+            );
+        }
         let conn = self.open_db()?;
         let path = self.document_path_by_relative_path(&conn, relative_path)?;
         let path = self.canonical_document_path(&path)?;
@@ -1193,6 +1236,164 @@ fn sqlite_sidecar_path(db_path: &Path, suffix: &str) -> PathBuf {
     let mut path = db_path.as_os_str().to_os_string();
     path.push(suffix);
     PathBuf::from(path)
+}
+
+fn starter_contract_path(root: &Path) -> PathBuf {
+    root.join("docs/starter-contract.json")
+}
+
+fn load_starter_contract(root: &Path) -> Option<StarterContract> {
+    let path = starter_contract_path(root);
+    let source = fs::read_to_string(path).ok()?;
+    let contract = serde_json::from_str::<StarterContract>(&source).ok()?;
+    let looks_like_minimal_starter = contract
+        .canonical
+        .iter()
+        .any(|entry| entry == "records/*.jsonl")
+        || contract
+            .name
+            .as_deref()
+            .unwrap_or_default()
+            .contains("Minimal AI Vault Starter");
+    looks_like_minimal_starter.then_some(contract)
+}
+
+fn can_edit_markdown_source(root: &Path, relative_path: &str) -> bool {
+    let Some(contract) = load_starter_contract(root) else {
+        return true;
+    };
+    !contract
+        .human_owned
+        .iter()
+        .any(|pattern| starter_glob_matches(pattern, relative_path))
+}
+
+fn starter_glob_matches(pattern: &str, relative_path: &str) -> bool {
+    if let Some(prefix) = pattern.strip_suffix("/**") {
+        return relative_path == prefix || relative_path.starts_with(&format!("{prefix}/"));
+    }
+    if let Some((prefix, suffix)) = pattern.split_once('*') {
+        return relative_path.starts_with(prefix) && relative_path.ends_with(suffix);
+    }
+    pattern == relative_path
+}
+
+fn starter_vault_summary(
+    root: &Path,
+    files: &[FileBrowserItem],
+) -> Result<Option<StarterVaultSummary>> {
+    let Some(contract) = load_starter_contract(root) else {
+        return Ok(None);
+    };
+    let record_collections = starter_record_collections(root)?;
+    let total_records = record_collections
+        .iter()
+        .map(|collection| collection.count)
+        .sum();
+    let human_note_count = files
+        .iter()
+        .filter(|file| {
+            contract
+                .human_owned
+                .iter()
+                .any(|pattern| starter_glob_matches(pattern, &file.relative_path))
+        })
+        .count();
+    let generated_view_count = files
+        .iter()
+        .filter(|file| {
+            contract
+                .generated
+                .iter()
+                .any(|pattern| starter_glob_matches(pattern, &file.relative_path))
+        })
+        .count();
+
+    Ok(Some(StarterVaultSummary {
+        name: contract
+            .name
+            .unwrap_or_else(|| "Minimal AI Vault Starter".to_string()),
+        promise: contract.promise.unwrap_or_default(),
+        human_owned: contract.human_owned,
+        canonical: contract.canonical,
+        generated: contract.generated,
+        record_collections,
+        total_records,
+        human_note_count,
+        generated_view_count,
+    }))
+}
+
+fn starter_record_collections(root: &Path) -> Result<Vec<StarterRecordCollection>> {
+    let records_dir = root.join("records");
+    if !records_dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut collections = Vec::new();
+    for entry in fs::read_dir(records_dir).context("read starter records directory")? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let file_name = filename_for(&path);
+        let source = fs::read_to_string(&path)
+            .with_context(|| format!("read starter record collection {}", path.display()))?;
+        let mut count = 0;
+        let mut record_type = None;
+        let mut status = "ok".to_string();
+        for (index, line) in source.split('\n').enumerate() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            count += 1;
+            match serde_json::from_str::<serde_json::Value>(trimmed) {
+                Ok(value) => {
+                    if record_type.is_none() {
+                        record_type = value
+                            .get("record_type")
+                            .or_else(|| value.get("type"))
+                            .and_then(|value| value.as_str())
+                            .map(str::to_string);
+                    }
+                }
+                Err(error) => {
+                    status = format!("parse issue on line {}: {error}", index + 1);
+                    break;
+                }
+            }
+        }
+        let schema_name = starter_schema_name(file_name.trim_end_matches(".jsonl"));
+        let schema = root
+            .join("schema")
+            .join(format!("{schema_name}.schema.json"));
+        collections.push(StarterRecordCollection {
+            file: format!("records/{file_name}"),
+            schema: schema
+                .exists()
+                .then(|| format!("schema/{schema_name}.schema.json")),
+            count,
+            record_type,
+            status,
+        });
+    }
+    collections.sort_by(|left, right| left.file.cmp(&right.file));
+    Ok(collections)
+}
+
+fn starter_schema_name(collection_name: &str) -> &str {
+    match collection_name {
+        "attachments" => "attachment",
+        "claims" => "claim",
+        "decisions" => "decision",
+        "entities" => "entity",
+        "projects" => "project",
+        "relations" => "relation",
+        "sources" => "source",
+        "tasks" => "task",
+        other => other.trim_end_matches('s'),
+    }
 }
 
 fn discover_vault_files(root: &Path) -> Result<Vec<DiscoveredFile>> {
@@ -1914,7 +2115,11 @@ fn row_to_document_view(
     })
 }
 
-fn vault_item_from_document(document: DocumentView, file: &FileRow) -> VaultItemView {
+fn vault_item_from_document(
+    document: DocumentView,
+    file: &FileRow,
+    can_edit_source: bool,
+) -> VaultItemView {
     VaultItemView {
         document_id: Some(document.id),
         slug: document.slug,
@@ -1937,7 +2142,7 @@ fn vault_item_from_document(document: DocumentView, file: &FileRow) -> VaultItem
         frontmatter_error: document.frontmatter_error,
         outgoing_links: document.outgoing_links,
         backlinks: document.backlinks,
-        can_edit_source: true,
+        can_edit_source,
         can_open_system: true,
         error: None,
     }

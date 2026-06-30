@@ -6,6 +6,7 @@ The app treats vault files and runtime indexes as separate layers.
 
 - **Canonical vault:** Markdown, YAML, JSON, media and other source files on disk. Human-readable, portable and inspectable outside Mega Viewer.
 - **Structured runtime:** SQLite stores document ids, slugs, source paths, frontmatter-derived metadata, outgoing links and backlink queries.
+- **Starter contract:** when `docs/starter-contract.json` declares a Minimal AI Vault Starter, the runtime exposes JSONL collection counts/schema links and treats contract-declared human-owned notes as read-only.
 - **Search runtime:** Tantivy stores full-text fields and shares SQLite document ids.
 - **UI shell:** Tauri exposes local Rust commands to a small desktop interface.
 

@@ -556,6 +556,78 @@ fn reader_fixture_pins_markdown_and_obsidian_rendering_semantics() {
 }
 
 #[test]
+fn understands_minimal_ai_vault_starter_contract_and_protects_human_notes() {
+    let temp = tempfile::tempdir().unwrap();
+    let vault = temp.path().join("vault");
+    fs::create_dir_all(vault.join("docs")).unwrap();
+    fs::create_dir_all(vault.join("records")).unwrap();
+    fs::create_dir_all(vault.join("schema")).unwrap();
+    fs::create_dir_all(vault.join("vault/daily")).unwrap();
+    fs::create_dir_all(vault.join("vault/inbox")).unwrap();
+    fs::create_dir_all(vault.join("views/markdown")).unwrap();
+
+    fs::write(
+        vault.join("docs/starter-contract.json"),
+        r#"{"name":"Minimal AI Vault Starter","promise":"Write daily/inbox notes; automation derives JSONL records without mutating human-owned notes.","human_owned":["vault/daily/**","vault/inbox/**"],"canonical":["records/*.jsonl","schema/*.schema.json"],"generated":["views/**","vault/ai-daily/**","vault/generated/**","dist/**"]}"#,
+    )
+    .unwrap();
+    fs::write(vault.join("schema/source.schema.json"), "{}\n").unwrap();
+    fs::write(vault.join("schema/task.schema.json"), "{}\n").unwrap();
+    fs::write(
+        vault.join("records/sources.jsonl"),
+        "{\"id\":\"source.daily.2026-01-01\",\"type\":\"source\",\"source_path\":\"vault/daily/2026-01-01.md\"}\n",
+    )
+    .unwrap();
+    fs::write(
+        vault.join("records/tasks.jsonl"),
+        "{\"id\":\"task.review\",\"type\":\"task\",\"title\":\"Review starter\"}\n",
+    )
+    .unwrap();
+    fs::write(
+        vault.join("vault/daily/2026-01-01.md"),
+        "# Daily\nHuman-owned evidence.\n",
+    )
+    .unwrap();
+    fs::write(
+        vault.join("vault/inbox/example.md"),
+        "# Inbox\nHuman-owned capture.\n",
+    )
+    .unwrap();
+    fs::write(vault.join("views/markdown/open-loops.md"), "# Open loops\n").unwrap();
+
+    let runtime = VaultRuntime::build(&vault, temp.path().join("state")).unwrap();
+    let browser = runtime.file_browser().unwrap();
+    let starter = browser.starter_vault.unwrap();
+
+    assert_eq!(starter.name, "Minimal AI Vault Starter");
+    assert_eq!(starter.total_records, 2);
+    assert_eq!(starter.human_note_count, 2);
+    assert_eq!(starter.generated_view_count, 1);
+    assert!(starter
+        .record_collections
+        .iter()
+        .any(|collection| collection.file == "records/sources.jsonl"
+            && collection.schema.as_deref() == Some("schema/source.schema.json")
+            && collection.record_type.as_deref() == Some("source")
+            && collection.count == 1));
+
+    let daily = runtime
+        .open_item_by_relative_path("vault/daily/2026-01-01.md")
+        .unwrap();
+    assert!(!daily.can_edit_source);
+    assert!(runtime
+        .write_document_source_by_relative_path("vault/daily/2026-01-01.md", "# Mutated\n")
+        .unwrap_err()
+        .to_string()
+        .contains("human-owned contract"));
+
+    let generated = runtime
+        .open_item_by_relative_path("views/markdown/open-loops.md")
+        .unwrap();
+    assert!(generated.can_edit_source);
+}
+
+#[test]
 fn opens_mixed_format_vault_items_without_rewriting_sources() {
     let temp = tempfile::tempdir().unwrap();
     let vault = temp.path().join("vault");

@@ -130,12 +130,15 @@ a:focus-visible {
 }
 
 .setup-panel,
-.vault-summary {
+.vault-summary,
+.starter-summary {
   display: grid;
   gap: 12px;
 }
 
-.vault-summary {
+.vault-summary,
+.starter-summary,
+.starter-detail {
   border: 1px solid #2d353c;
   border-radius: 7px;
   background: #111417;
@@ -167,6 +170,53 @@ a:focus-visible {
   font-size: 15px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.starter-summary {
+  border-color: #315346;
+  background: linear-gradient(180deg, rgba(95, 204, 151, 0.09), rgba(17, 20, 23, 0.96));
+}
+
+.starter-summary strong {
+  color: #dff8ea;
+  font-size: 14px;
+}
+
+.starter-summary small,
+.starter-detail p,
+.starter-detail summary,
+.starter-metrics span {
+  color: #a7b5bd;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.starter-detail {
+  margin: 0 0 12px;
+}
+
+.starter-detail p {
+  margin: 0;
+}
+
+.starter-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin: 10px 0;
+}
+
+.starter-metrics span {
+  border: 1px solid #29343a;
+  border-radius: 6px;
+  background: #151a1e;
+  padding: 7px;
+}
+
+.starter-metrics strong {
+  display: block;
+  color: #edf1f5;
+  font-size: 15px;
 }
 
 .compact-actions {

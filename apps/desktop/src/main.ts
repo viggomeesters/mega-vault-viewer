@@ -95,6 +95,26 @@ type VaultGroupEntry = {
   latest_relative_path: string;
 };
 
+type StarterRecordCollection = {
+  file: string;
+  schema: string | null;
+  count: number;
+  record_type: string | null;
+  status: string;
+};
+
+type StarterVaultSummary = {
+  name: string;
+  promise: string;
+  human_owned: string[];
+  canonical: string[];
+  generated: string[];
+  record_collections: StarterRecordCollection[];
+  total_records: number;
+  human_note_count: number;
+  generated_view_count: number;
+};
+
 type FileBrowserSnapshot = {
   folders: FolderEntry[];
   newest_files: FileBrowserItem[];
@@ -104,6 +124,7 @@ type FileBrowserSnapshot = {
   timeline_items: FileBrowserItem[];
   entities: VaultGroupEntry[];
   projects: VaultGroupEntry[];
+  starter_vault: StarterVaultSummary | null;
 };
 
 type IndexSnapshot = {
@@ -195,6 +216,7 @@ function render() {
         </div>
 
         ${renderVaultSetup()}
+        ${renderStarterVaultSummary()}
         ${renderDailyCalendar()}
         ${renderPrimaryNavigation()}
 
@@ -575,11 +597,12 @@ function renderGroupItem(group: VaultGroupEntry) {
 
 function renderDetailSummary() {
   if (!currentDocument) {
-    return `<section class="sidebar-section"><h3>Detail</h3><p class="empty">No item open.</p></section>`;
+    return `<section class="sidebar-section"><h3>Detail</h3>${renderStarterVaultDetail()}<p class="empty">No item open.</p></section>`;
   }
   return `
     <section class="sidebar-section">
       <h3>Detail</h3>
+      ${renderStarterVaultDetail()}
       <div class="file-list">
         <button class="file-item is-current" type="button" data-relative-path="${escapeAttribute(currentDocument.relative_path)}">
           <strong>${escapeHtml(currentDocument.filename)}</strong>
@@ -587,6 +610,55 @@ function renderDetailSummary() {
         </button>
       </div>
     </section>
+  `;
+}
+
+function renderStarterVaultSummary() {
+  const starter = fileBrowserSnapshot?.starter_vault;
+  if (appMode !== "ready" || !starter) {
+    return "";
+  }
+  return `
+    <section class="starter-summary" aria-label="Minimal AI Vault Starter summary">
+      <p class="eyebrow">Starter vault</p>
+      <strong>${escapeHtml(starter.name)}</strong>
+      <small>${starter.total_records} records · ${starter.human_note_count} human notes locked · ${starter.generated_view_count} generated views</small>
+    </section>
+  `;
+}
+
+function renderStarterVaultDetail() {
+  const starter = fileBrowserSnapshot?.starter_vault;
+  if (!starter) {
+    return "";
+  }
+  return `
+    <div class="starter-detail">
+      <p>${escapeHtml(starter.promise)}</p>
+      <div class="starter-metrics" aria-label="Starter metrics">
+        <span><strong>${starter.total_records}</strong> records</span>
+        <span><strong>${starter.human_note_count}</strong> locked human notes</span>
+        <span><strong>${starter.generated_view_count}</strong> generated views</span>
+      </div>
+      <details>
+        <summary>Canonical JSONL collections</summary>
+        <div class="file-list">
+          ${starter.record_collections.map(renderStarterRecordCollection).join("") || `<p class="empty">No records found.</p>`}
+        </div>
+      </details>
+    </div>
+  `;
+}
+
+function renderStarterRecordCollection(collection: StarterRecordCollection) {
+  const meta = [collection.record_type ?? "record", `${collection.count} row${collection.count === 1 ? "" : "s"}`, collection.schema ?? "schema missing", collection.status]
+    .filter(Boolean)
+    .join(" · ");
+  return `
+    <button class="file-item" type="button" data-relative-path="${escapeAttribute(collection.file)}" title="${escapeAttribute(collection.file)}">
+      <strong>${escapeHtml(collection.file.replace("records/", ""))}</strong>
+      <span>${escapeHtml(meta)}</span>
+    </button>
   `;
 }
 

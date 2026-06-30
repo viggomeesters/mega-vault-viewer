@@ -13,6 +13,7 @@ The app is aimed at people who like Markdown and filesystem-based knowledge work
 - Browse common vault items including Markdown, YAML, JSON, JSONL, images, PDFs, and unsupported files with safe fallbacks.
 - Search titles, paths, body text, and slugs through a local Tantivy index.
 - Store document metadata, links, file fingerprints, and navigation state in a local SQLite shadow index.
+- Detect Minimal AI Vault Starter contracts, show canonical JSONL record collection status, and keep `vault/daily/**` plus `vault/inbox/**` read-only in the viewer.
 - Keep the vault canonical: source files, media, and system files remain in their original formats.
 
 ## Current Status
