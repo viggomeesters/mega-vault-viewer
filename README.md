@@ -101,6 +101,12 @@ MVV_VERSION=v0.1.1 bash scripts/install-macos.sh
 
 The script first tries to download the matching macOS release asset for your architecture. If no release asset exists yet, it falls back to cloning/updating the repo under `~/.local/share/mega-vault-viewer/source`, building locally with `npm run desktop:build:macos`, copying `Mega Vault Viewer.app` to `/Applications`, and removing quarantine metadata. Until signing/notarization is added, macOS may still ask you to confirm opening the app the first time.
 
+If you are handing this to Codex on the MacBook, give it this instruction link:
+
+```text
+https://raw.githubusercontent.com/viggomeesters/mega-vault-viewer/main/docs/codex-macos-install-update.md
+```
+
 ### Build from source
 
 Prerequisites:

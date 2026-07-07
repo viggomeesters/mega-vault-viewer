@@ -41,7 +41,8 @@
       "tasks": [
         "mvv-repo-complete-go",
         "mvv-linux-appimage-build",
-        "mvv-macos-install-update"
+        "mvv-macos-install-update",
+        "mvv-codex-update-instructions"
       ]
     }
   ]
