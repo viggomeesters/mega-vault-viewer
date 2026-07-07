@@ -1807,6 +1807,10 @@ fn replace_markdown_images(body: &str, vault_root: &Path, document_path: &Path) 
 }
 
 fn render_media_html(target: &str, alt: &str, vault_root: &Path, document_path: &Path) -> String {
+    if let Some(hash) = parse_cas_sha256_target(target) {
+        return render_cas_media_html(&hash, alt, vault_root);
+    }
+
     let Some(path) = resolve_media_path(target, vault_root, document_path) else {
         return format!(
             r#"<span class="missing-media">Missing media: {}</span>"#,
@@ -1830,6 +1834,58 @@ fn render_media_html(target: &str, alt: &str, vault_root: &Path, document_path: 
             r#"<span class="missing-media">Missing media: {}</span>"#,
             escape_html(target)
         ),
+    }
+}
+
+fn render_cas_media_html(hash: &str, alt: &str, vault_root: &Path) -> String {
+    let path = vault_root
+        .join("blobs")
+        .join("sha256")
+        .join(&hash[..2])
+        .join(hash);
+    if !path.is_file() {
+        return format!(
+            r#"<span class="missing-media">Missing CAS blob: {}</span>"#,
+            escape_html(hash)
+        );
+    }
+    match fs::read(&path) {
+        Ok(bytes) => {
+            let Some(mime) = mime_for_bytes(&bytes) else {
+                return format!(
+                    r#"<span class="missing-media">Unsupported CAS media: {}</span>"#,
+                    escape_html(hash)
+                );
+            };
+            format!(
+                r#"<img class="vault-image vault-image-cas" data-cas-sha256="{}" src="data:{};base64,{}" alt="{}" loading="lazy" />"#,
+                escape_html(hash),
+                mime,
+                general_purpose::STANDARD.encode(bytes),
+                escape_html(alt)
+            )
+        }
+        Err(_) => format!(
+            r#"<span class="missing-media">Missing CAS blob: {}</span>"#,
+            escape_html(hash)
+        ),
+    }
+}
+
+fn parse_cas_sha256_target(target: &str) -> Option<String> {
+    let cleaned = target.trim();
+    let hash = cleaned
+        .strip_prefix("cas-sha256-")
+        .or_else(|| cleaned.strip_prefix("cas:sha256:"))
+        .or_else(|| cleaned.strip_prefix("cassha256:"))
+        .or_else(|| cleaned.strip_prefix("cassha256"))
+        .or_else(|| cleaned.strip_prefix("blob://sha256/"))
+        .or_else(|| cleaned.strip_prefix("file.sha256."))?;
+    let hash = hash.trim();
+    if hash.len() == 64 && hash.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        Some(hash.to_ascii_lowercase())
+    } else {
+        None
     }
 }
 
@@ -1927,6 +1983,22 @@ fn mime_for_path(path: &Path) -> Option<&'static str> {
         Some("avif") => Some("image/avif"),
         Some("heic") => Some("image/heic"),
         _ => None,
+    }
+}
+
+fn mime_for_bytes(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n']) {
+        Some("image/png")
+    } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        Some("image/jpeg")
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        Some("image/gif")
+    } else if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
+        Some("image/webp")
+    } else if bytes.starts_with(b"<svg") || bytes.starts_with(b"<?xml") {
+        Some("image/svg+xml")
+    } else {
+        None
     }
 }
 

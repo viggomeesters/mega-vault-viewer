@@ -509,6 +509,51 @@ slug: image-note
 }
 
 #[test]
+fn renders_cas_sha256_images_from_vault_blobs_without_preview_copies() {
+    let temp = tempfile::tempdir().unwrap();
+    let vault = temp.path().join("vault");
+    let notes = vault.join("daily");
+    let hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let blob_dir = vault.join("blobs/sha256/aa");
+    fs::create_dir_all(&notes).unwrap();
+    fs::create_dir_all(&blob_dir).unwrap();
+    fs::write(
+        blob_dir.join(hash),
+        [0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n'],
+    )
+    .unwrap();
+    fs::write(
+        notes.join("2026-07-05.md"),
+        format!(
+            r#"---
+slug: cas-note
+---
+
+# CAS Note
+
+![[cas-sha256-{hash}|500]]
+
+![[file.sha256.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|missing]]
+"#
+        ),
+    )
+    .unwrap();
+
+    let runtime = VaultRuntime::build(&vault, temp.path().join("state")).unwrap();
+    let note = runtime.open_by_slug("cas-note").unwrap();
+
+    assert!(note.html.contains(r#"class="vault-image vault-image-cas""#));
+    assert!(note.html.contains(
+        r#"data-cas-sha256="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa""#
+    ));
+    assert!(note.html.contains("src=\"data:image/png;base64,"));
+    assert!(note.html.contains(
+        "Missing CAS blob: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    ));
+    assert!(!vault.join("views/file_previews").exists());
+}
+
+#[test]
 fn reader_fixture_pins_markdown_and_obsidian_rendering_semantics() {
     let temp = tempfile::tempdir().unwrap();
     let vault = Path::new(env!("CARGO_MANIFEST_DIR"))
