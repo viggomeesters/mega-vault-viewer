@@ -362,22 +362,46 @@ a:focus-visible {
   font-size: 11px;
 }
 
+.query-search {
+  display: grid;
+  gap: 6px;
+  border: 1px solid #26323a;
+  border-radius: 10px;
+  background: #11161a;
+  padding: 8px;
+}
+
 .search-field {
   gap: 4px;
 }
 
 .search-field span {
-  color: #b5c0c9;
-  font-size: 12px;
-  font-weight: 800;
+  color: #8c9aa4;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
 }
 
 .search-field input {
-  min-height: 34px;
-  border-color: #36515c;
-  background: #0c1114;
-  font-size: 12px;
+  min-height: 36px;
+  border-color: #334752;
+  border-radius: 8px;
+  background: #090f12;
+  font-size: 13px;
   font-weight: 700;
+}
+
+.search-submit-button {
+  min-height: 30px;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.search-hint {
+  color: #71818b;
+  font-size: 10px;
+  line-height: 1.2;
 }
 
 .starter-summary {
@@ -437,47 +461,54 @@ a:focus-visible {
   grid-template-columns: 1fr;
 }
 
-.primary-nav,
-.nav-group,
-.nav-group div {
+.primary-nav {
   display: grid;
   min-width: 0;
 }
 
-.primary-nav {
-  gap: 6px;
-}
-
-.nav-group {
-  gap: 4px;
-}
-
-.nav-group span {
-  color: #7c8790;
-  font-size: 9px;
-  font-weight: 900;
-  letter-spacing: 0.11em;
-  text-transform: uppercase;
-}
-
-.nav-group div {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+.command-nav {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 5px;
+  border: 1px solid #26323a;
+  border-radius: 10px;
+  background: #101418;
+  padding: 5px;
 }
 
-.primary-tab {
-  min-height: 28px;
-  border-color: #2a333a;
-  background: #101518;
-  color: #a5b0b9;
-  font-size: 11px;
+.command-tab {
+  display: grid;
+  min-height: 46px;
+  align-content: center;
+  justify-items: center;
+  gap: 2px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #9aa8b1;
+  font-size: 10px;
   font-weight: 750;
 }
 
-.primary-tab:hover,
-.primary-tab.is-active {
-  background: #22313a;
+.command-tab span {
+  color: #6f808a;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.command-tab strong {
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.command-tab:hover,
+.command-tab.is-active {
+  border-color: #31505e;
+  background: #18242b;
   color: #edf1f5;
+}
+
+.command-tab.is-active span {
+  color: #7fd4ff;
 }
 
 .secondary-button {
