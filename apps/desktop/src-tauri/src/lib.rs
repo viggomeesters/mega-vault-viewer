@@ -304,6 +304,35 @@ async fn save_document_source(
             .map_err(|error| error.to_string())?;
     }
 
+    rebuild_runtime_and_open(app, state, vault_path, relative_path).await
+}
+
+#[tauri::command]
+async fn create_or_open_daily_note(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    vault_path: String,
+    date: String,
+) -> Result<SaveSnapshot, String> {
+    let relative_path = {
+        let guard = state.runtime.lock().map_err(|_| "runtime lock poisoned")?;
+        let runtime = guard
+            .as_ref()
+            .ok_or_else(|| "Open a vault before creating daily notes".to_string())?;
+        runtime
+            .ensure_daily_note(&date)
+            .map_err(|error| error.to_string())?
+    };
+
+    rebuild_runtime_and_open(app, state, vault_path, relative_path).await
+}
+
+async fn rebuild_runtime_and_open(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    vault_path: String,
+    relative_path: String,
+) -> Result<SaveSnapshot, String> {
     let state_dir = runtime_state_dir(&app)?;
     let snapshot = tauri::async_runtime::spawn_blocking(move || {
         let runtime = VaultRuntime::build(&vault_path, state_dir)?;
@@ -385,7 +414,8 @@ pub fn run() {
             open_item_in_system,
             file_browser,
             read_document_source,
-            save_document_source
+            save_document_source,
+            create_or_open_daily_note
         ])
         .run(tauri::generate_context!())
         .expect("error while running Mega Vault Viewer");

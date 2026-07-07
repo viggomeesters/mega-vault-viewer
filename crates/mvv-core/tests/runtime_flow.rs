@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use mvv_core::VaultRuntime;
+use mvv_core::{DailyNoteProcessedStatus, VaultRuntime};
 
 #[test]
 fn indexes_fixture_vault_links_and_searches_body_text() {
@@ -214,6 +214,69 @@ fn searches_and_opens_jsonl_records() {
         .entities
         .iter()
         .any(|entry| entry.name == "2025-11-smart-data-platform"));
+}
+
+#[test]
+fn creates_daily_notes_and_tracks_ai_processed_status() {
+    let temp = tempfile::tempdir().unwrap();
+    let vault = temp.path().join("vault");
+    fs::create_dir_all(&vault).unwrap();
+
+    let runtime = VaultRuntime::build(&vault, temp.path().join("state")).unwrap();
+    let relative_path = runtime.ensure_daily_note("2026-07-07").unwrap();
+    assert_eq!(relative_path, "daily/2026-07-07.md");
+    let created = fs::read_to_string(vault.join(&relative_path)).unwrap();
+    assert!(created.contains("date: 2026-07-07"));
+    assert!(created.contains("last_updated:"));
+
+    let runtime = VaultRuntime::build(&vault, temp.path().join("state")).unwrap();
+    runtime
+        .write_document_source_by_relative_path(
+            "daily/2026-07-07.md",
+            "---\ntitle: Test\nlast_updated: 2026-07-07T20:00:00Z\nai_processed_at: 2000-01-01T00:00:00Z\n---\n\nBody",
+        )
+        .unwrap();
+    let written = fs::read_to_string(vault.join(&relative_path)).unwrap();
+    assert!(written.contains("title: Test"));
+    assert!(written.contains("ai_processed_at: 2000-01-01T00:00:00Z"));
+    assert!(!written.contains("last_updated: 2026-07-07T20:00:00Z"));
+
+    let runtime = VaultRuntime::build(&vault, temp.path().join("state")).unwrap();
+    let daily = runtime
+        .file_browser()
+        .unwrap()
+        .daily_notes
+        .into_iter()
+        .find(|entry| entry.date == "2026-07-07")
+        .unwrap();
+    assert!(daily.last_updated.unwrap().starts_with("2026-"));
+    assert_eq!(
+        daily.ai_processed_at.as_deref(),
+        Some("2000-01-01T00:00:00Z")
+    );
+    assert_eq!(
+        daily.ai_processed_status,
+        DailyNoteProcessedStatus::Outdated
+    );
+
+    runtime
+        .write_document_source_by_relative_path(
+            "daily/2026-07-07.md",
+            "---\ntitle: Test\nlast_updated: 2026-07-07T20:00:00Z\nai_processed_at: 2999-01-01T00:00:00Z\n---\n\nBody",
+        )
+        .unwrap();
+    let runtime = VaultRuntime::build(&vault, temp.path().join("state")).unwrap();
+    let daily = runtime
+        .file_browser()
+        .unwrap()
+        .daily_notes
+        .into_iter()
+        .find(|entry| entry.date == "2026-07-07")
+        .unwrap();
+    assert_eq!(
+        daily.ai_processed_status,
+        DailyNoteProcessedStatus::Processed
+    );
 }
 
 #[test]

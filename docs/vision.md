@@ -21,6 +21,7 @@ Open a vault once, keep it remembered, browse the real top-level structure, jump
 - The app shell must be calm: independent sidebar/document scrolling, non-redundant headers, compact metadata, permanent search, grouped navigators, and detailed vault chrome behind disclosure.
 - JSON/JSONL are first-class reader/search formats, not invisible runtime files.
 - Entities and Projects are separate navigator concepts; project IDs must not leak into entity lists.
+- Daily notes behave like working notes, not export artifacts: clicking a calendar day opens/creates `daily/YYYY-MM-DD.md`, daily Markdown opens in autosave edit mode, `last_updated` marks the human note write boundary, and `ai_processed_at >= last_updated` is the only green AI-ingest state.
 - Verification must include fixture/runtime proof for real vault layouts, not only static UI assumptions.
 
 ## Non-Goals

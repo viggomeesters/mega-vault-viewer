@@ -510,11 +510,48 @@ a:focus-visible {
   width: 5px;
   height: 5px;
   border-radius: 999px;
+}
+
+.calendar-day .note-dot {
+  left: calc(50% - 6px);
   background: #7fd4ff;
+}
+
+.calendar-day .processed-dot {
+  left: calc(50% + 2px);
+  background: #f59e0b;
+}
+
+.calendar-day .create-dot {
+  width: 4px;
+  height: 4px;
+  border: 1px solid #33414b;
+  background: transparent;
+}
+
+.calendar-day.is-ai-processed .processed-dot {
+  background: #22c55e;
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.16);
+}
+
+.calendar-day.is-ai-outdated .processed-dot {
+  background: #f97316;
+}
+
+.calendar-day.is-ai-missing .processed-dot {
+  background: #ef4444;
+}
+
+.calendar-day.is-ai-not_tracked .processed-dot {
+  background: #64748b;
 }
 
 .calendar-day.is-selected i {
   background: #ffffff;
+}
+
+.calendar-day.is-selected.is-ai-processed .processed-dot {
+  background: #bbf7d0;
 }
 
 .results {

@@ -32,7 +32,8 @@
       "features": [],
       "tasks": [
         "mvv-reader-shell-ux",
-        "mvv-navigation-data-ux-redesign"
+        "mvv-navigation-data-ux-redesign",
+        "mvv-daily-live-ai-ingest-contract"
       ]
     },
     {

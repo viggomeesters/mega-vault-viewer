@@ -82,11 +82,16 @@ type FolderEntry = {
   files: FileBrowserItem[];
 };
 
+type DailyNoteProcessedStatus = "not_tracked" | "missing" | "outdated" | "processed";
+
 type DailyNoteEntry = {
   date: string;
   id: number | null;
   filename: string;
   relative_path: string;
+  last_updated: string | null;
+  ai_processed_at: string | null;
+  ai_processed_status: DailyNoteProcessedStatus;
 };
 
 type VaultGroupEntry = {
@@ -533,20 +538,25 @@ function renderDailyCalendar() {
 }
 
 function renderCalendarDay(day: CalendarDay, dailyNote: DailyNoteEntry | undefined) {
+  const processedStatus = dailyNote?.ai_processed_status ?? "missing";
   const classes = [
     "calendar-day",
     day.inMonth ? "" : "is-outside",
     isToday(day.date) ? "is-today" : "",
     isCurrentDocumentDailyNote(dailyNote) ? "is-selected" : "",
     dailyNote ? "has-note" : "",
+    dailyNote ? `is-ai-${processedStatus}` : "is-missing-note",
   ]
     .filter(Boolean)
     .join(" ");
+  const title = dailyNote
+    ? `${dailyNote.relative_path} · AI ${processedStatus}${dailyNote.last_updated ? ` · updated ${dailyNote.last_updated}` : ""}${dailyNote.ai_processed_at ? ` · processed ${dailyNote.ai_processed_at}` : ""}`
+    : `Create daily note ${day.key}`;
 
   return `
-    <button class="${classes}" type="button" data-calendar-date="${day.key}" ${dailyNote ? `data-relative-path="${escapeAttribute(dailyNote.relative_path)}"` : ""}>
+    <button class="${classes}" type="button" title="${escapeAttribute(title)}" data-calendar-date="${day.key}" ${dailyNote ? `data-relative-path="${escapeAttribute(dailyNote.relative_path)}"` : ""}>
       <span>${day.date.getDate()}</span>
-      ${dailyNote ? `<i aria-hidden="true"></i>` : ""}
+      ${dailyNote ? `<i class="note-dot" aria-hidden="true"></i><i class="processed-dot" aria-hidden="true"></i>` : `<i class="create-dot" aria-hidden="true"></i>`}
     </button>
   `;
 }
@@ -892,8 +902,10 @@ function bindEvents() {
         void openItemByPath(relativePath);
         return;
       }
-      statusText = `No daily note for ${button.dataset.calendarDate}`;
-      render();
+      const date = button.dataset.calendarDate;
+      if (date) {
+        void createOrOpenDailyNote(date);
+      }
     });
   });
   document.querySelectorAll<HTMLButtonElement>("[data-file-view]").forEach((button) => {
@@ -1184,6 +1196,23 @@ async function openItemByPath(relativePath: string, recordHistory = true) {
   render();
 }
 
+async function createOrOpenDailyNote(date: string) {
+  try {
+    statusText = `Opening daily note ${date}`;
+    render();
+    const snapshot = await invoke<SaveSnapshot>("create_or_open_daily_note", { vaultPath, date });
+    currentStats = snapshot.stats;
+    fileBrowserSnapshot = await invoke<FileBrowserSnapshot>("file_browser");
+    applyOpenedDocument(snapshot.item, `Opened daily note ${date}`, true);
+    lastRefreshAt = new Date();
+    indexHealth = "watching";
+    render();
+  } catch (error) {
+    statusText = String(error);
+    render();
+  }
+}
+
 async function openCurrentItemInSystem() {
   if (!currentDocument) {
     return;
@@ -1316,6 +1345,13 @@ function applyOpenedDocument(document: VaultItemView, status: string, recordHist
   currentDocument = document;
   primaryView = "detail";
   statusText = status;
+  if (isDailyNotePath(document.relative_path) && document.can_edit_source) {
+    window.setTimeout(() => {
+      if (currentDocument?.relative_path === document.relative_path && !isEditing) {
+        void enterEditMode();
+      }
+    }, 0);
+  }
 }
 
 function resetEditState() {
@@ -1450,6 +1486,10 @@ function persistEditSource(relativePath: string, source: string) {
     relativePath,
     source,
   });
+}
+
+function isDailyNotePath(relativePath: string) {
+  return /^daily\/\d{4}-\d{2}-\d{2}\.md$/.test(relativePath);
 }
 
 function startAutoRefresh() {

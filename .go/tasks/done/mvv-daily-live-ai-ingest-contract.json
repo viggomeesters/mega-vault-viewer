@@ -1,0 +1,34 @@
+{
+  "schema": "go-workflow.repo-local.task.v1",
+  "kind": "task",
+  "id": "mvv-daily-live-ai-ingest-contract",
+  "project": "mega-vault-viewer",
+  "status": "done",
+  "summary": "Daily note create/live edit and AI processed status",
+  "description": "Make calendar days behave like Obsidian daily notes: clicking a missing day creates daily/YYYY-MM-DD.md, daily notes open in autosave edit mode, daily frontmatter tracks last_updated, and calendar shows AI processed status from ai_processed_at compared with last_updated.",
+  "scope": {
+    "read": [
+      "apps/desktop/src/main.ts;apps/desktop/src-tauri/src/lib.rs;crates/mvv-core/src/lib.rs;crates/mvv-core/tests/runtime_flow.rs;apps/desktop/src/styles.css"
+    ],
+    "modify": [
+      "apps/desktop/src/main.ts;apps/desktop/src-tauri/src/lib.rs;crates/mvv-core/src/lib.rs;crates/mvv-core/tests/runtime_flow.rs;apps/desktop/src/styles.css;CHANGELOG.md;docs/vision.md;.go/**"
+    ]
+  },
+  "acceptance": [
+    "Clicking a missing calendar date creates and opens daily/YYYY-MM-DD.md; daily notes enter autosave edit mode immediately; saving daily source updates last_updated; calendar daily entries expose ai_processed_at/last_updated and render green processed marker when ai_processed_at >= last_updated; JSONL/Markdown tests pass."
+  ],
+  "verification": [
+    "cargo test --workspace; npm run check; browser smoke"
+  ],
+  "claim": {
+    "agent": "hermes",
+    "claimed_at": "2026-07-07T12:12:14+02:00"
+  },
+  "evidence": [
+    {
+      "created_at": "2026-07-07T12:24:13+02:00",
+      "agent": "hermes",
+      "summary": "Implemented Obsidian-like daily note workflow: create/open daily/YYYY-MM-DD.md from missing calendar day; daily markdown opens in autosave edit mode; daily writes stamp last_updated; file_browser exposes last_updated, ai_processed_at, and ai_processed_status; calendar renders note + AI processed markers with green only when ai_processed_at >= last_updated. Verification: cargo test -p mvv-core creates_daily_notes_and_tracks_ai_processed_status --test runtime_flow, npm run check, go validate, browser DOM smoke blank=false searchVisible=true cssHasProcessed=true setupNoError=true."
+    }
+  ]
+}

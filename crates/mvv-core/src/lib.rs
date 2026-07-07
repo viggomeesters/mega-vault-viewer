@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::UNIX_EPOCH;
 
+use chrono::{DateTime, SecondsFormat, Utc};
+
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose, Engine as _};
 use pulldown_cmark::{html, Options, Parser};
@@ -109,6 +111,18 @@ pub struct DailyNoteEntry {
     pub id: Option<i64>,
     pub filename: String,
     pub relative_path: String,
+    pub last_updated: Option<String>,
+    pub ai_processed_at: Option<String>,
+    pub ai_processed_status: DailyNoteProcessedStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DailyNoteProcessedStatus {
+    NotTracked,
+    Missing,
+    Outdated,
+    Processed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -539,13 +553,15 @@ impl VaultRuntime {
             })
         })?;
 
-        let mut files = Vec::new();
-        for row in rows {
-            files.push(file_browser_item(row?));
-        }
+        let browser_rows = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+        let files = browser_rows
+            .iter()
+            .cloned()
+            .map(file_browser_item)
+            .collect::<Vec<_>>();
 
         let folders = folder_entries(&files);
-        let daily_notes = daily_note_entries(&files);
+        let daily_notes = daily_note_entries(&browser_rows);
         let today_items = today_items(&files);
         let timeline_items = timeline_items(&files);
         let entities = grouped_metadata_entries(&conn, GroupKind::Entity)?;
@@ -646,6 +662,26 @@ impl VaultRuntime {
         fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))
     }
 
+    pub fn ensure_daily_note(&self, date: &str) -> Result<String> {
+        if !is_valid_daily_date(date) {
+            anyhow::bail!("invalid daily note date: {date}");
+        }
+        let relative_path = format!("daily/{date}.md");
+        let path = self.root.join(&relative_path);
+        let path = canonical_path_for_new_file(&self.root, &path)?;
+        if !path.exists() {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("create {}", parent.display()))?;
+            }
+            let now = iso_timestamp_now();
+            let source =
+                format!("---\ntitle: {date}\ndate: {date}\nlast_updated: {now}\n---\n\n# {date}\n");
+            fs::write(&path, source).with_context(|| format!("write {}", path.display()))?;
+        }
+        Ok(relative_path)
+    }
+
     pub fn write_document_source_by_relative_path(
         &self,
         relative_path: &str,
@@ -659,6 +695,11 @@ impl VaultRuntime {
         let conn = self.open_db()?;
         let path = self.document_path_by_relative_path(&conn, relative_path)?;
         let path = self.canonical_document_path(&path)?;
+        let source = if is_daily_note_relative_path(relative_path) {
+            upsert_frontmatter_field(source, "last_updated", &iso_timestamp_now())?
+        } else {
+            source.to_string()
+        };
         fs::write(&path, source).with_context(|| format!("write {}", path.display()))
     }
 
@@ -2581,19 +2622,36 @@ fn top_level_folder(relative_path: &str) -> String {
         .to_string()
 }
 
-fn daily_note_entries(files: &[FileBrowserItem]) -> Vec<DailyNoteEntry> {
+fn daily_note_entries(files: &[BrowserFileRow]) -> Vec<DailyNoteEntry> {
     let mut entries = files
         .iter()
         .filter_map(|file| {
             if file.kind != "markdown" {
                 return None;
             }
-            let date = daily_note_date(&file.filename, &file.relative_path)?;
+            let filename = filename_for(&file.path);
+            let date = daily_note_date(&filename, &file.relative_path)?;
+            let source = fs::read_to_string(&file.path).unwrap_or_default();
+            let (frontmatter, _, _) = split_frontmatter(&source);
+            let last_updated = frontmatter.as_ref().and_then(|value| {
+                metadata_first_string(value, &["last_updated", "updated", "modified"])
+            });
+            let ai_processed_at = frontmatter.as_ref().and_then(|value| {
+                metadata_first_string(
+                    value,
+                    &["ai_processed_at", "processed_at", "bertus_processed_at"],
+                )
+            });
+            let ai_processed_status =
+                daily_processed_status(&date, last_updated.as_deref(), ai_processed_at.as_deref());
             Some(DailyNoteEntry {
                 date,
                 id: file.id,
-                filename: file.filename.clone(),
+                filename,
                 relative_path: file.relative_path.clone(),
+                last_updated,
+                ai_processed_at,
+                ai_processed_status,
             })
         })
         .collect::<Vec<_>>();
@@ -2819,6 +2877,111 @@ fn project_from_path(relative_path: &str) -> Option<String> {
         return parts.next().map(str::to_string);
     }
     None
+}
+
+fn metadata_first_string(frontmatter: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    for key in keys {
+        let mut values = Vec::new();
+        collect_metadata_value(frontmatter.get(*key), &mut values);
+        if let Some(value) = values.into_iter().find(|value| !value.trim().is_empty()) {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn daily_processed_status(
+    date: &str,
+    last_updated: Option<&str>,
+    ai_processed_at: Option<&str>,
+) -> DailyNoteProcessedStatus {
+    if date < "2026-07-01" {
+        return DailyNoteProcessedStatus::NotTracked;
+    }
+    let Some(last_updated) = last_updated else {
+        return DailyNoteProcessedStatus::Missing;
+    };
+    let Some(ai_processed_at) = ai_processed_at else {
+        return DailyNoteProcessedStatus::Missing;
+    };
+    let Some(last_updated) = parse_frontmatter_timestamp(last_updated) else {
+        return DailyNoteProcessedStatus::Missing;
+    };
+    let Some(ai_processed_at) = parse_frontmatter_timestamp(ai_processed_at) else {
+        return DailyNoteProcessedStatus::Missing;
+    };
+    if ai_processed_at >= last_updated {
+        DailyNoteProcessedStatus::Processed
+    } else {
+        DailyNoteProcessedStatus::Outdated
+    }
+}
+
+fn parse_frontmatter_timestamp(value: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(value)
+        .map(|timestamp| timestamp.with_timezone(&Utc))
+        .ok()
+}
+
+fn iso_timestamp_now() -> String {
+    Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
+}
+
+fn is_valid_daily_date(date: &str) -> bool {
+    daily_note_date(&format!("{date}.md"), &format!("daily/{date}.md")).is_some()
+}
+
+fn is_daily_note_relative_path(relative_path: &str) -> bool {
+    relative_path
+        .strip_prefix("daily/")
+        .and_then(|filename| daily_note_date(filename, relative_path))
+        .is_some()
+}
+
+fn canonical_path_for_new_file(root: &Path, path: &Path) -> Result<PathBuf> {
+    let root = root
+        .canonicalize()
+        .with_context(|| format!("resolve {}", root.display()))?;
+    let parent = path
+        .parent()
+        .with_context(|| format!("path has no parent: {}", path.display()))?;
+    fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    let parent = parent
+        .canonicalize()
+        .with_context(|| format!("resolve {}", parent.display()))?;
+    if !parent.starts_with(&root) {
+        anyhow::bail!("new file path is outside vault: {}", path.display());
+    }
+    Ok(parent.join(path.file_name().context("path has no filename")?))
+}
+
+fn upsert_frontmatter_field(source: &str, key: &str, value: &str) -> Result<String> {
+    if let Some(stripped) = source.strip_prefix("---\n") {
+        if let Some(close_index) = stripped.find("\n---") {
+            let yaml = &stripped[..close_index];
+            let rest = &stripped[(close_index + 4)..];
+            let mut lines = yaml.lines().map(str::to_string).collect::<Vec<_>>();
+            let replacement = format!("{key}: {value}");
+            let mut replaced = false;
+            for line in &mut lines {
+                let trimmed = line.trim_start();
+                if trimmed.starts_with(&format!("{key}:")) {
+                    *line = replacement.clone();
+                    replaced = true;
+                    break;
+                }
+            }
+            let mut updated = lines.join("\n");
+            if !replaced {
+                if !updated.is_empty() {
+                    updated.push('\n');
+                }
+                updated.push_str(&replacement);
+            }
+            return Ok(format!("---\n{updated}\n---{rest}"));
+        }
+    }
+    Ok(format!("---\n{key}: {value}\n---\n\n{source}"))
 }
 
 fn daily_note_date(filename: &str, relative_path: &str) -> Option<String> {
