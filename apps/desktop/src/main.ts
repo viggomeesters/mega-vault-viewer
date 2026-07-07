@@ -226,8 +226,11 @@ function render() {
     <section class="shell">
       <aside class="sidebar" aria-label="Vault explorer">
         <div class="brand compact-brand" aria-label="Mega Vault Viewer">
-          <strong title="Mega Vault Viewer">MVV</strong>
-          <span>${escapeHtml(formatIndexHealth())}</span>
+          <div class="brand-lockup">
+            <span class="vault-mark" aria-hidden="true"><i></i></span>
+            <strong title="Mega Vault Viewer">MVV</strong>
+          </div>
+          <span class="brand-status">${escapeHtml(formatIndexHealth())}</span>
         </div>
 
         ${renderVaultSetup()}
