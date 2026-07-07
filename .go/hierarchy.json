@@ -37,7 +37,8 @@
         "mvv-compact-left-setup-chrome",
         "mvv-edit-mode-scrollbar-design",
         "mvv-edit-actions-header",
-        "mvv-query-search-nav-overhaul"
+        "mvv-query-search-nav-overhaul",
+        "mvv-remove-sidebar-nav-strip"
       ]
     },
     {

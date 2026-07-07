@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Polished edit mode layout: metadata chrome is hidden while editing, the textarea owns the scrollbar, the save footer no longer floats over content, scrollbars are dark, and sidebar search/navigation controls are calmer.
 - Moved edit-mode Save/Cancel actions into the top document header; the bottom editor footer is now passive path/save-state only.
 - Reworked the sidebar shell with a compact command navigator, removed the duplicate right-rail Vault card under the calendar, and changed search to submit-on-Enter/Search with background status instead of searching on every typed character.
+- Removed the remaining sidebar navigation strip: Today, Timeline, Entities, Projects, and Detail are no longer rendered in the left rail; the sidebar now goes straight from query to Files.
 
 ## [0.1.1] - 2026-07-07
 

@@ -461,55 +461,6 @@ a:focus-visible {
   grid-template-columns: 1fr;
 }
 
-.primary-nav {
-  display: grid;
-  min-width: 0;
-}
-
-.command-nav {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 5px;
-  border: 1px solid #26323a;
-  border-radius: 10px;
-  background: #101418;
-  padding: 5px;
-}
-
-.command-tab {
-  display: grid;
-  min-height: 46px;
-  align-content: center;
-  justify-items: center;
-  gap: 2px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: #9aa8b1;
-  font-size: 10px;
-  font-weight: 750;
-}
-
-.command-tab span {
-  color: #6f808a;
-  font-size: 13px;
-  line-height: 1;
-}
-
-.command-tab strong {
-  font-size: 10px;
-  font-weight: 800;
-}
-
-.command-tab:hover,
-.command-tab.is-active {
-  border-color: #31505e;
-  background: #18242b;
-  color: #edf1f5;
-}
-
-.command-tab.is-active span {
-  color: #7fd4ff;
-}
 
 .secondary-button {
   min-height: 36px;

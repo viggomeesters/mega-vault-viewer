@@ -156,7 +156,6 @@ type SaveSnapshot = {
 
 type AppMode = "setup" | "indexing" | "ready" | "error";
 type IndexHealth = "idle" | "watching" | "updating" | "stale" | "error";
-type PrimaryView = "today" | "timeline" | "entities" | "projects" | "files" | "detail";
 type FileViewMode = "folders" | "newest" | "recent";
 type CalendarDay = {
   date: Date;
@@ -176,7 +175,6 @@ let currentDocument: VaultItemView | null = null;
 let currentStats: VaultStats | null = null;
 let searchResults: SearchHit[] = [];
 let fileBrowserSnapshot: FileBrowserSnapshot | null = null;
-let primaryView: PrimaryView = "today";
 let fileViewMode: FileViewMode = "folders";
 let calendarMonth = startOfMonth(new Date());
 let statusText = "Ready";
@@ -236,7 +234,6 @@ function render() {
           <button id="search-submit-button" class="secondary-button search-submit-button" type="submit" ${isSearchRunning ? "disabled" : ""}>${isSearchRunning ? "Searching" : "Search"}</button>
           <small class="search-hint">Enter runs search · typing stays local</small>
         </form>
-        ${renderPrimaryNavigation()}
 
         <div class="results" aria-label="Navigator results">
           ${renderSidebarExplorer()}
@@ -476,31 +473,6 @@ function renderSearchHit(hit: SearchHit) {
   `;
 }
 
-function renderPrimaryNavigation() {
-  const items: Array<{ view: PrimaryView; label: string; icon: string }> = [
-    { view: "today", label: "Today", icon: "●" },
-    { view: "timeline", label: "Timeline", icon: "↦" },
-    { view: "entities", label: "Entities", icon: "◎" },
-    { view: "projects", label: "Projects", icon: "◇" },
-    { view: "files", label: "Files", icon: "▦" },
-    { view: "detail", label: "Detail", icon: "⌁" },
-  ];
-  return `
-    <nav class="primary-nav command-nav" aria-label="Vault views">
-      ${items.map((item) => renderPrimaryTab(item.view, item.label, item.icon)).join("")}
-    </nav>
-  `;
-}
-
-function renderPrimaryTab(view: PrimaryView, label: string, icon: string) {
-  return `
-    <button class="primary-tab command-tab ${primaryView === view ? "is-active" : ""}" type="button" data-primary-view="${view}" aria-current="${primaryView === view ? "page" : "false"}">
-      <span aria-hidden="true">${escapeHtml(icon)}</span>
-      <strong>${escapeHtml(label)}</strong>
-    </button>
-  `;
-}
-
 function renderRightRail() {
   if (appMode !== "ready") {
     return "";
@@ -567,21 +539,6 @@ function renderSidebarExplorer() {
   if (searchInputValue.trim().length > 0) {
     return `<section class="sidebar-section query-ready-section"><h3>Query ready</h3><p class="empty">Press Enter to search. Typing no longer searches every keystroke.</p></section>`;
   }
-  if (primaryView === "today") {
-    return renderItemListSection("Today", fileBrowserSnapshot?.today_items ?? [], "No indexed items for today.");
-  }
-  if (primaryView === "timeline") {
-    return renderItemListSection("Timeline", fileBrowserSnapshot?.timeline_items ?? [], "No timeline items.");
-  }
-  if (primaryView === "entities") {
-    return renderGroupSection("Entities", fileBrowserSnapshot?.entities ?? []);
-  }
-  if (primaryView === "projects") {
-    return renderGroupSection("Projects", fileBrowserSnapshot?.projects ?? []);
-  }
-  if (primaryView === "detail") {
-    return renderDetailSummary();
-  }
   return renderFilesSection();
 }
 
@@ -601,55 +558,6 @@ function renderFilesSection() {
   `;
 }
 
-function renderItemListSection(title: string, files: FileBrowserItem[], emptyText: string) {
-  return `
-    <section class="sidebar-section">
-      <h3>${escapeHtml(title)}</h3>
-      <div class="file-list">
-        ${files.map(renderFileItem).join("") || `<p class="empty">${escapeHtml(emptyText)}</p>`}
-      </div>
-    </section>
-  `;
-}
-
-function renderGroupSection(title: string, groups: VaultGroupEntry[]) {
-  return `
-    <section class="sidebar-section">
-      <h3>${escapeHtml(title)}</h3>
-      <div class="file-list">
-        ${groups.map(renderGroupItem).join("") || `<p class="empty">No indexed ${escapeHtml(title.toLowerCase())} yet.</p>`}
-      </div>
-    </section>
-  `;
-}
-
-function renderGroupItem(group: VaultGroupEntry) {
-  return `
-    <button class="file-item group-item" type="button" data-relative-path="${escapeAttribute(group.latest_relative_path)}" title="${escapeAttribute(group.latest_relative_path)}">
-      <strong>${escapeHtml(group.name)}</strong>
-      <span>${group.count} item${group.count === 1 ? "" : "s"} · ${escapeHtml(group.latest_title)}</span>
-    </button>
-  `;
-}
-
-function renderDetailSummary() {
-  if (!currentDocument) {
-    return `<section class="sidebar-section"><h3>Detail</h3>${renderStarterVaultDetail()}<p class="empty">No item open.</p></section>`;
-  }
-  return `
-    <section class="sidebar-section">
-      <h3>Detail</h3>
-      ${renderStarterVaultDetail()}
-      <div class="file-list">
-        <button class="file-item is-current" type="button" data-relative-path="${escapeAttribute(currentDocument.relative_path)}">
-          <strong>${escapeHtml(currentDocument.filename)}</strong>
-          <span>${escapeHtml(currentDocument.kind)} · ${escapeHtml(currentDocument.relative_path)}</span>
-        </button>
-      </div>
-    </section>
-  `;
-}
-
 function renderStarterVaultSummary() {
   const starter = fileBrowserSnapshot?.starter_vault;
   if (appMode !== "ready" || !starter) {
@@ -661,41 +569,6 @@ function renderStarterVaultSummary() {
       <strong>${escapeHtml(starter.name)}</strong>
       <small>${starter.total_records} records · ${starter.human_note_count} human notes locked · ${starter.generated_view_count} generated views</small>
     </section>
-  `;
-}
-
-function renderStarterVaultDetail() {
-  const starter = fileBrowserSnapshot?.starter_vault;
-  if (!starter) {
-    return "";
-  }
-  return `
-    <div class="starter-detail">
-      <p>${escapeHtml(starter.promise)}</p>
-      <div class="starter-metrics" aria-label="Starter metrics">
-        <span><strong>${starter.total_records}</strong> records</span>
-        <span><strong>${starter.human_note_count}</strong> locked human notes</span>
-        <span><strong>${starter.generated_view_count}</strong> generated views</span>
-      </div>
-      <details>
-        <summary>Canonical JSONL collections</summary>
-        <div class="file-list">
-          ${starter.record_collections.map(renderStarterRecordCollection).join("") || `<p class="empty">No records found.</p>`}
-        </div>
-      </details>
-    </div>
-  `;
-}
-
-function renderStarterRecordCollection(collection: StarterRecordCollection) {
-  const meta = [collection.record_type ?? "record", `${collection.count} row${collection.count === 1 ? "" : "s"}`, collection.schema ?? "schema missing", collection.status]
-    .filter(Boolean)
-    .join(" · ");
-  return `
-    <button class="file-item" type="button" data-relative-path="${escapeAttribute(collection.file)}" title="${escapeAttribute(collection.file)}">
-      <strong>${escapeHtml(collection.file.replace("records/", ""))}</strong>
-      <span>${escapeHtml(meta)}</span>
-    </button>
   `;
 }
 
@@ -887,15 +760,6 @@ function bindEvents() {
       resetSearchState();
       render();
     }
-  });
-  document.querySelectorAll<HTMLButtonElement>("[data-primary-view]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const view = button.dataset.primaryView;
-      if (isPrimaryView(view)) {
-        primaryView = view;
-        render();
-      }
-    });
   });
   document.querySelectorAll<HTMLButtonElement>("[data-calendar-action]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -1362,7 +1226,6 @@ function applyOpenedDocument(document: VaultItemView, status: string, recordHist
 
   resetEditState();
   currentDocument = document;
-  primaryView = "detail";
   statusText = status;
   if (isDailyNotePath(document.relative_path) && document.can_edit_source) {
     window.setTimeout(() => {
@@ -1633,17 +1496,6 @@ function formatBytes(bytes: number) {
 
 function isMarkdownItem(item: VaultItemView) {
   return item.kind === "markdown";
-}
-
-function isPrimaryView(value: string | undefined): value is PrimaryView {
-  return (
-    value === "today" ||
-    value === "timeline" ||
-    value === "entities" ||
-    value === "projects" ||
-    value === "files" ||
-    value === "detail"
-  );
 }
 
 function dailyNotesByDate() {
