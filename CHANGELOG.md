@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## Unreleased
 
-No unreleased changes yet.
+### Fixed
+
+- Kept sync fast for JSONL vaults with large CAS stores by skipping `blobs/`, `.obsidian`, and runtime/cache directories during normal index discovery. CAS media still renders lazily from `blobs/sha256/<first2>/<hash>` when a note references it.
 
 ## [0.1.1] - 2026-07-07
 

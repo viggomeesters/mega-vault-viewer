@@ -1425,12 +1425,15 @@ fn starter_schema_name(collection_name: &str) -> &str {
 
 fn discover_vault_files(root: &Path) -> Result<Vec<DiscoveredFile>> {
     let mut files = Vec::new();
-    for entry in WalkDir::new(root).into_iter().filter_map(Result::ok) {
+    for entry in WalkDir::new(root)
+        .into_iter()
+        .filter_entry(|entry| should_descend_vault_entry(root, entry.path()))
+        .filter_map(Result::ok)
+    {
         let path = entry.path();
         if !entry.file_type().is_file() {
             continue;
         }
-        let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
         let metadata =
             fs::metadata(path).with_context(|| format!("read metadata {}", path.display()))?;
         let extension = normalized_extension(path);
@@ -1441,11 +1444,62 @@ fn discover_vault_files(root: &Path) -> Result<Vec<DiscoveredFile>> {
             extension,
             size_bytes: metadata.len() as i64,
             modified_ns: metadata.modified().ok().and_then(system_time_nanos),
-            content_hash: content_hash_bytes(&bytes),
+            content_hash: content_hash_for_discovery(path, &metadata)?,
         });
     }
     files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
     Ok(files)
+}
+
+fn should_descend_vault_entry(root: &Path, path: &Path) -> bool {
+    if path == root {
+        return true;
+    }
+    let Ok(relative_path) = path.strip_prefix(root) else {
+        return true;
+    };
+    let Some(first_component) = relative_path.components().next() else {
+        return true;
+    };
+    let first_component = first_component.as_os_str().to_string_lossy();
+    !matches!(
+        first_component.as_ref(),
+        ".git"
+            | ".obsidian"
+            | ".trash"
+            | "blobs"
+            | "indexes"
+            | "node_modules"
+            | "target"
+            | "mega-vault-viewer.sqlite"
+            | "tantivy"
+    )
+}
+
+fn content_hash_for_discovery(path: &Path, metadata: &fs::Metadata) -> Result<String> {
+    if is_markdown_path(path) {
+        let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+        return Ok(content_hash_bytes(&bytes));
+    }
+
+    let modified_ns = metadata
+        .modified()
+        .ok()
+        .and_then(system_time_nanos)
+        .unwrap_or(0);
+    Ok(content_hash_bytes(
+        format!(
+            "mvv-metadata-v1:{}:{}:{}",
+            normalized_extension(path),
+            metadata.len(),
+            modified_ns
+        )
+        .as_bytes(),
+    ))
+}
+
+fn is_markdown_path(path: &Path) -> bool {
+    matches!(normalized_extension(path).as_str(), "md" | "markdown")
 }
 
 fn normalized_extension(path: &Path) -> String {

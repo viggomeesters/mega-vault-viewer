@@ -170,6 +170,47 @@ slug: alpha
 }
 
 #[test]
+fn sync_skips_cas_blob_payload_tree() {
+    let temp = tempfile::tempdir().unwrap();
+    let vault = temp.path().join("vault");
+    fs::create_dir_all(vault.join("daily")).unwrap();
+    fs::create_dir_all(vault.join("blobs/sha256/aa")).unwrap();
+    fs::create_dir_all(vault.join(".obsidian/plugins/cas-blob-viewer")).unwrap();
+
+    fs::write(
+        vault.join("daily/2026-07-07.md"),
+        r#"# Daily
+
+![[cas-sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|500]]
+"#,
+    )
+    .unwrap();
+    for index in 0..50 {
+        fs::write(
+            vault.join(format!("blobs/sha256/aa/{index:064x}")),
+            vec![index as u8; 1024],
+        )
+        .unwrap();
+    }
+    fs::write(
+        vault.join(".obsidian/plugins/cas-blob-viewer/main.js"),
+        "plugin bundle",
+    )
+    .unwrap();
+
+    let runtime = VaultRuntime::build(&vault, temp.path().join("state")).unwrap();
+
+    assert_eq!(runtime.index_summary().scanned, 1);
+    assert_eq!(runtime.stats().unwrap().documents, 1);
+    assert!(runtime
+        .file_manifest()
+        .unwrap()
+        .iter()
+        .all(|entry| !entry.relative_path.starts_with("blobs/")
+            && !entry.relative_path.starts_with(".obsidian/")));
+}
+
+#[test]
 fn runtime_state_uses_explicit_cache_dir_and_reset_never_touches_vault_files() {
     let temp = tempfile::tempdir().unwrap();
     let vault = temp.path().join("vault");

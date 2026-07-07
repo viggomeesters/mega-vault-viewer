@@ -16,6 +16,7 @@ Open a vault once, keep it remembered, browse the real top-level structure, jump
 - Source files remain the source of truth; SQLite/Tantivy/render state is rebuildable cache.
 - Read-first before edit-first; writes are explicit, scoped, and transaction-minded.
 - JSONL-vault conventions are first-class: daily notes live at `daily/YYYY-MM-DD.md`; binary payloads live in CAS at `blobs/sha256/<first2>/<hash>`.
+- CAS blobs are lazy-render payloads, not normal sync/index inputs; regular sync must not traverse/hash the full `blobs/` tree.
 - Navigation should mirror the vault's mental model: top-level folders first, details on demand.
 - The app shell must be calm: independent sidebar/document scrolling, non-redundant headers, compact metadata.
 - Local-first UX must remember the current vault and offer a switcher without cloud/account state.
