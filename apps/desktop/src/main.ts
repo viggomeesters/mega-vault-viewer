@@ -256,6 +256,14 @@ function render() {
                   ? `<button id="open-system-button" class="secondary-button" type="button" ${isSaving ? "disabled" : ""}>Open</button>`
                   : ""
               }
+              ${
+                currentDocument?.can_edit_source && isEditing
+                  ? `<div class="header-edit-actions" aria-label="Edit actions">
+                      <button id="cancel-edit-button" class="secondary-button" type="button" ${isSaving ? "disabled" : ""}>Cancel</button>
+                      <button id="save-edit-button" type="button" ${isSaving ? "disabled" : ""}>${isSaving ? "Saving..." : "Save"}</button>
+                    </div>`
+                  : ""
+              }
               <div class="nav-buttons" aria-label="Document navigation">
                 <button id="back-button" type="button" title="Back" aria-label="Back" ${backStack.length === 0 || isSaving ? "disabled" : ""}>&lt;</button>
                 <button id="forward-button" type="button" title="Forward" aria-label="Forward" ${forwardStack.length === 0 || isSaving ? "disabled" : ""}>&gt;</button>
@@ -369,10 +377,6 @@ function renderDocumentContent() {
         <div class="editor-meta">
           <p>${escapeHtml(currentDocument.relative_path)}</p>
           <small id="editor-save-state">${escapeHtml(editorSaveStateText())}</small>
-        </div>
-        <div class="editor-actions">
-          <button id="cancel-edit-button" class="secondary-button" type="button" ${isSaving ? "disabled" : ""}>Cancel</button>
-          <button id="save-edit-button" type="button" ${isSaving ? "disabled" : ""}>${isSaving ? "Saving..." : "Save"}</button>
         </div>
       </div>
       ${editError ? `<p class="error-text">${escapeHtml(editError)}</p>` : ""}

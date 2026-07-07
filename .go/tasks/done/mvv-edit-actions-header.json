@@ -1,0 +1,34 @@
+{
+  "schema": "go-workflow.repo-local.task.v1",
+  "kind": "task",
+  "id": "mvv-edit-actions-header",
+  "project": "mega-vault-viewer",
+  "status": "done",
+  "summary": "Move edit actions into document header",
+  "description": "Because edit mode autosaves, remove Save/Cancel from the bottom footer and place them in the top document action row near Read/Open/navigation. Keep footer as passive path/save-state only.",
+  "scope": {
+    "read": [
+      "apps/desktop/src/main.ts;apps/desktop/src/styles.css;apps/desktop/src/*.test.ts"
+    ],
+    "modify": [
+      "apps/desktop/src/main.ts;apps/desktop/src/styles.css;CHANGELOG.md;.go/**"
+    ]
+  },
+  "acceptance": [
+    "In edit mode Save and Cancel render in the top header action row; editor footer contains only path/save status; existing save/cancel handlers still bind; browser smoke verifies button positions and no footer actions."
+  ],
+  "verification": [
+    "npm --workspace apps/desktop run build; npm run check; browser DOM/vision smoke"
+  ],
+  "claim": {
+    "agent": "hermes",
+    "claimed_at": "2026-07-07T14:31:30+02:00"
+  },
+  "evidence": [
+    {
+      "created_at": "2026-07-07T14:33:54+02:00",
+      "agent": "hermes",
+      "summary": "Moved edit-mode Save/Cancel from bottom editor footer into top document header action row. Footer now contains only path and save-state. Verification: npm --workspace apps/desktop run build; browser DOM smoke blank=false saveInHeader=true cancelInHeader=true footerButtonCount=0 saveAboveFooter=true; browser visual smoke; npm run check; go validate."
+    }
+  ]
+}
