@@ -39,7 +39,8 @@
       "description": "Install repo-local .go state, vision, and repo-complete proof.",
       "features": [],
       "tasks": [
-        "mvv-repo-complete-go"
+        "mvv-repo-complete-go",
+        "mvv-linux-appimage-build"
       ]
     }
   ]

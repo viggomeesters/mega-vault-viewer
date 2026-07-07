@@ -1,0 +1,34 @@
+{
+  "schema": "go-workflow.repo-local.task.v1",
+  "kind": "task",
+  "id": "mvv-linux-appimage-build",
+  "project": "mega-vault-viewer",
+  "status": "done",
+  "summary": "Fix Linux AppImage packaging in WSL",
+  "description": "Make npm run desktop:build finish successfully on Linux/WSL despite linuxdeploy AppImage/FUSE and icon-name mismatch.",
+  "scope": {
+    "read": [
+      "scripts/tauri-build.mjs;apps/desktop/src-tauri/tauri.conf.json"
+    ],
+    "modify": [
+      "scripts/tauri-build.mjs"
+    ]
+  },
+  "acceptance": [
+    "npm run desktop:build exits 0 and writes target/release/bundle/appimage/*.AppImage"
+  ],
+  "verification": [
+    "npm run desktop:build;npm run check"
+  ],
+  "claim": {
+    "agent": "hermes",
+    "claimed_at": "2026-07-07T10:57:26+02:00"
+  },
+  "evidence": [
+    {
+      "created_at": "2026-07-07T10:57:41+02:00",
+      "agent": "hermes",
+      "summary": "Root cause: linuxdeploy AppImage/FUSE plus AppDir icon basename mismatch. Fixed scripts/tauri-build.mjs to set APPIMAGE_EXTRACT_AND_RUN and repair Linux AppImage by copying expected icon basename then running linuxdeploy-plugin-appimage. npm run desktop:build exits 0 and writes target/release/bundle/appimage/Mega_Vault_Viewer-x86_64.AppImage (74M); npm run check exits 0."
+    }
+  ]
+}
