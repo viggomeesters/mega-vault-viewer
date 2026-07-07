@@ -151,7 +151,7 @@ type SaveSnapshot = {
 
 type AppMode = "setup" | "indexing" | "ready" | "error";
 type IndexHealth = "idle" | "watching" | "updating" | "stale" | "error";
-type PrimaryView = "today" | "timeline" | "entities" | "projects" | "files" | "search" | "detail";
+type PrimaryView = "today" | "timeline" | "entities" | "projects" | "files" | "detail";
 type FileViewMode = "folders" | "newest" | "recent";
 type CalendarDay = {
   date: Date;
@@ -197,6 +197,7 @@ let refreshTimer: number | null = null;
 let watchDebounceTimer: number | null = null;
 let watchUnlisten: UnlistenFn | null = null;
 let watchErrorUnlisten: UnlistenFn | null = null;
+let searchDebounceTimer: number | null = null;
 let indexHealth: IndexHealth = "idle";
 let rememberedVaults: string[] = [];
 
@@ -213,27 +214,20 @@ const formatScore = new Intl.NumberFormat("en", {
 function render() {
   appRoot.innerHTML = `
     <section class="shell">
-      <aside class="sidebar" aria-label="Vault controls">
-        <div class="brand">
-          <p class="eyebrow">Local-first</p>
+      <aside class="sidebar" aria-label="Vault explorer">
+        <div class="brand compact-brand">
           <h1>Mega Vault Viewer</h1>
+          <span>${escapeHtml(formatIndexHealth())}</span>
         </div>
 
         ${renderVaultSetup()}
-        ${renderStarterVaultSummary()}
-        ${renderDailyCalendar()}
+        <label class="field search-field">
+          <span>Search</span>
+          <input id="search-box" name="search" value="${escapeAttribute(currentSearchQuery)}" placeholder="Search notes, JSON, JSONL, paths" spellcheck="false" />
+        </label>
         ${renderPrimaryNavigation()}
 
-        ${
-          primaryView === "search"
-            ? `<label class="field">
-                <span>Search</span>
-                <input id="search-box" name="search" value="${escapeAttribute(currentSearchQuery)}" placeholder="Search title, body, slug, path" spellcheck="false" />
-              </label>`
-            : ""
-        }
-
-        <div class="results" aria-label="Search results">
+        <div class="results" aria-label="Navigator results">
           ${renderSidebarExplorer()}
         </div>
       </aside>
@@ -273,6 +267,10 @@ function render() {
           ${renderDocumentContent()}
         </article>
       </section>
+
+      <aside class="right-rail" aria-label="Calendar and vault details">
+        ${renderRightRail()}
+      </aside>
     </section>
   `;
 
@@ -464,18 +462,20 @@ function renderSearchHit(hit: SearchHit) {
 }
 
 function renderPrimaryNavigation() {
-  const tabs: Array<[PrimaryView, string]> = [
-    ["today", "Today"],
-    ["timeline", "Timeline"],
-    ["entities", "Entities"],
-    ["projects", "Projects"],
-    ["files", "Files"],
-    ["search", "Search"],
-    ["detail", "Detail"],
-  ];
   return `
     <nav class="primary-nav" aria-label="Vault views">
-      ${tabs.map(([view, label]) => renderPrimaryTab(view, label)).join("")}
+      <section class="nav-group" aria-label="Time">
+        <span>Time</span>
+        <div>${renderPrimaryTab("today", "Today")}${renderPrimaryTab("timeline", "Timeline")}</div>
+      </section>
+      <section class="nav-group" aria-label="Data model">
+        <span>Data</span>
+        <div>${renderPrimaryTab("entities", "Entities")}${renderPrimaryTab("projects", "Projects")}</div>
+      </section>
+      <section class="nav-group" aria-label="Browse">
+        <span>Browse</span>
+        <div>${renderPrimaryTab("files", "Files")}${renderPrimaryTab("detail", "Detail")}</div>
+      </section>
     </nav>
   `;
 }
@@ -485,6 +485,29 @@ function renderPrimaryTab(view: PrimaryView, label: string) {
     <button class="primary-tab ${primaryView === view ? "is-active" : ""}" type="button" data-primary-view="${view}" aria-current="${primaryView === view ? "page" : "false"}">
       ${escapeHtml(label)}
     </button>
+  `;
+}
+
+function renderRightRail() {
+  if (appMode !== "ready") {
+    return "";
+  }
+  return `
+    ${renderDailyCalendar()}
+    <details class="vault-detail-card">
+      <summary>
+        <span>Vault</span>
+        <strong>${escapeHtml(formatVaultName(vaultPath))}</strong>
+      </summary>
+      <div>
+        <p>${escapeHtml(formatVaultSummary())}</p>
+        <code title="${escapeAttribute(vaultPath)}">${escapeHtml(vaultPath)}</code>
+        <div class="compact-actions compact-actions-single">
+          <button id="reset-index-button" class="secondary-button" type="button" title="Reset rebuildable cache only" ${isRefreshing ? "disabled" : ""}>Reset cache</button>
+        </div>
+      </div>
+    </details>
+    ${renderStarterVaultSummary()}
   `;
 }
 
@@ -529,6 +552,9 @@ function renderCalendarDay(day: CalendarDay, dailyNote: DailyNoteEntry | undefin
 }
 
 function renderSidebarExplorer() {
+  if (currentSearchQuery.trim().length > 0) {
+    return `<section class="sidebar-section search-results-section"><h3>Search results</h3>${searchResults.map(renderSearchHit).join("") || `<p class="empty">No results.</p>`}</section>`;
+  }
   if (primaryView === "today") {
     return renderItemListSection("Today", fileBrowserSnapshot?.today_items ?? [], "No indexed items for today.");
   }
@@ -540,10 +566,6 @@ function renderSidebarExplorer() {
   }
   if (primaryView === "projects") {
     return renderGroupSection("Projects", fileBrowserSnapshot?.projects ?? []);
-  }
-  if (primaryView === "search") {
-    const hasSearch = currentSearchQuery.trim().length > 0;
-    return `<section class="sidebar-section"><h3>Search results</h3>${hasSearch ? searchResults.map(renderSearchHit).join("") || `<p class="empty">No results.</p>` : `<p class="empty">Type a query and press Enter.</p>`}</section>`;
   }
   if (primaryView === "detail") {
     return renderDetailSummary();
@@ -720,17 +742,11 @@ function renderVaultSetup() {
   const recentVaultButtons = renderRecentVaultButtons();
   if (appMode === "ready" && !showVaultSetup) {
     return `
-      <section class="vault-summary" aria-label="Current vault">
-        <div>
-          <span>Current vault</span>
-          <strong title="${escapeAttribute(vaultPath)}">${escapeHtml(formatVaultName(vaultPath))}</strong>
-          <small>${escapeHtml(formatVaultSummary())}</small>
-          <small class="vault-path" title="${escapeAttribute(vaultPath)}">${escapeHtml(vaultPath)}</small>
-        </div>
-        <div class="compact-actions">
-          <button id="reset-index-button" class="secondary-button" type="button" title="Reset rebuildable cache only" ${isRefreshing ? "disabled" : ""}>Reset cache</button>
-          <button id="change-vault-button" class="secondary-button" type="button">Switch vault</button>
-        </div>
+      <section class="vault-chip" aria-label="Current vault">
+        <button id="change-vault-button" class="vault-chip-main" type="button" title="${escapeAttribute(vaultPath)}">
+          <strong>${escapeHtml(formatVaultName(vaultPath))}</strong>
+          <small>${escapeHtml(formatStats(currentStats))}</small>
+        </button>
       </section>
     `;
   }
@@ -837,11 +853,13 @@ function bindEvents() {
   document.querySelector<HTMLInputElement>("#search-box")?.addEventListener("keydown", (event) => {
     currentSearchQuery = (event.target as HTMLInputElement).value;
     if (event.key === "Enter") {
+      clearSearchDebounce();
       void runSearch(currentSearchQuery);
     }
   });
   document.querySelector<HTMLInputElement>("#search-box")?.addEventListener("input", (event) => {
     currentSearchQuery = (event.target as HTMLInputElement).value;
+    scheduleSearch();
   });
   document.querySelectorAll<HTMLButtonElement>("[data-primary-view]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -921,8 +939,17 @@ function bindEvents() {
 async function loadDefaultPath() {
   rememberedVaults = loadRememberedVaults();
   const storedVault = window.localStorage.getItem(LAST_VAULT_STORAGE_KEY) ?? "";
-  const defaultVault = await invoke<string>("default_vault_path");
-  vaultPath = storedVault || defaultVault;
+  try {
+    const defaultVault = await invoke<string>("default_vault_path");
+    vaultPath = storedVault || defaultVault;
+  } catch (error) {
+    vaultPath = storedVault;
+    const message = String(error);
+    if (!message.includes("invoke")) {
+      lastError = message;
+      appMode = storedVault ? "setup" : "error";
+    }
+  }
   render();
 }
 
@@ -946,6 +973,8 @@ async function indexVault() {
     statusText = `Synced ${snapshot.stats.documents} documents · ${formatIndexSummary(snapshot.index_summary)}`;
     searchResults = [];
     currentSearchQuery = "";
+    clearSearchDebounce();
+    clearSearchDebounce();
     lastRefreshAt = new Date();
     appMode = "ready";
     showVaultSetup = false;
@@ -980,6 +1009,8 @@ async function resetIndex() {
     forwardStack = [];
     searchResults = [];
     currentSearchQuery = "";
+    clearSearchDebounce();
+    clearSearchDebounce();
     lastRefreshAt = new Date();
     appMode = "ready";
     showVaultSetup = false;
@@ -1093,6 +1124,31 @@ async function refreshIndexInBackground(reason: "timer" | "focus" | "watcher" = 
     isRefreshing = false;
     render();
   }
+}
+
+async function clearSearchDebounce() {
+  if (searchDebounceTimer !== null) {
+    window.clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = null;
+  }
+}
+
+function scheduleSearch() {
+  clearSearchDebounce();
+  const query = currentSearchQuery.trim();
+  if (query.length === 0) {
+    searchResults = [];
+    render();
+    return;
+  }
+  if (query.length < 2) {
+    render();
+    return;
+  }
+  searchDebounceTimer = window.setTimeout(() => {
+    searchDebounceTimer = null;
+    void runSearch(query);
+  }, 260);
 }
 
 async function runSearch(query: string) {
@@ -1537,7 +1593,6 @@ function isPrimaryView(value: string | undefined): value is PrimaryView {
     value === "entities" ||
     value === "projects" ||
     value === "files" ||
-    value === "search" ||
     value === "detail"
   );
 }

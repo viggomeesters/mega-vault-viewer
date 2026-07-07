@@ -31,7 +31,8 @@
       "description": "Make the desktop shell calmer, persistent, and independently scrollable.",
       "features": [],
       "tasks": [
-        "mvv-reader-shell-ux"
+        "mvv-reader-shell-ux",
+        "mvv-navigation-data-ux-redesign"
       ]
     },
     {

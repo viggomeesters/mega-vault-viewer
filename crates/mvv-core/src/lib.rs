@@ -391,24 +391,49 @@ impl VaultRuntime {
         let mut hits = Vec::new();
         for (score, address) in top_docs {
             let retrieved = searcher.doc::<TantivyDocument>(address)?;
+            let relative_path = first_text(&retrieved, fields.doc_key);
             let Some(id) = first_u64(&retrieved, fields.id) else {
                 continue;
             };
             if let Some(summary) = document_summary(&conn, id as i64)? {
-                hits.push(SearchHit {
-                    id: Some(summary.id),
-                    slug: summary.slug,
-                    title: summary.title,
-                    filename: summary.filename,
-                    stem: summary.stem,
-                    path: summary.path,
-                    relative_path: summary.relative_path,
-                    kind: "markdown".to_string(),
-                    extension: "md".to_string(),
-                    size_bytes: 0,
-                    snippet: snippet_for(&summary.body),
-                    score,
-                });
+                if relative_path.as_deref() == Some(summary.relative_path.as_str()) {
+                    hits.push(SearchHit {
+                        id: Some(summary.id),
+                        slug: summary.slug,
+                        title: summary.title,
+                        filename: summary.filename,
+                        stem: summary.stem,
+                        path: summary.path,
+                        relative_path: summary.relative_path,
+                        kind: "markdown".to_string(),
+                        extension: "md".to_string(),
+                        size_bytes: 0,
+                        snippet: snippet_for(&summary.body),
+                        score,
+                    });
+                    continue;
+                }
+            }
+            if let Some(relative_path) = relative_path {
+                if let Some(file) = file_row_by_relative_path(&conn, &relative_path)? {
+                    let path = self.canonical_vault_file_path(&file.absolute_path)?;
+                    let body =
+                        searchable_structured_source(&path, &file.extension).unwrap_or_default();
+                    hits.push(SearchHit {
+                        id: None,
+                        slug: relative_path.clone(),
+                        title: fallback_title(&path),
+                        filename: filename_for(&path),
+                        stem: stem_for(&path),
+                        path,
+                        relative_path,
+                        kind: file.kind,
+                        extension: file.extension,
+                        size_bytes: file.size_bytes,
+                        snippet: snippet_for(&body),
+                        score,
+                    });
+                }
             }
         }
         append_file_search_hits(&conn, &mut hits, &file_search_query, limit)?;
@@ -803,8 +828,16 @@ impl VaultRuntime {
                 } else {
                     remove_document_for_path(&tx, &file.relative_path)?;
                     upsert_file_state(&tx, &file, None)?;
-                    writer.delete_term(Term::from_field_text(fields.doc_key, &file.relative_path));
-                    search_deleted.push(file.relative_path.clone());
+                    if is_searchable_structured_extension(&file.extension) && needs_search_update {
+                        replace_search_file(&mut writer, &fields, &file)?;
+                        search_synced.push((file.relative_path.clone(), file.content_hash.clone()));
+                    } else {
+                        writer.delete_term(Term::from_field_text(
+                            fields.doc_key,
+                            &file.relative_path,
+                        ));
+                        search_deleted.push(file.relative_path.clone());
+                    }
                 }
 
                 summary.updated += 1;
@@ -1500,6 +1533,18 @@ fn content_hash_for_discovery(path: &Path, metadata: &fs::Metadata) -> Result<St
 
 fn is_markdown_path(path: &Path) -> bool {
     matches!(normalized_extension(path).as_str(), "md" | "markdown")
+}
+
+fn is_searchable_structured_extension(extension: &str) -> bool {
+    matches!(extension, "json" | "jsonl" | "yaml" | "yml")
+}
+
+fn searchable_structured_source(path: &Path, extension: &str) -> Result<String> {
+    let source = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    if extension == "json" {
+        return Ok(format_structured_source(&source, extension).unwrap_or(source));
+    }
+    Ok(source)
 }
 
 fn normalized_extension(path: &Path) -> String {
@@ -2214,11 +2259,47 @@ fn replace_search_row(
     Ok(())
 }
 
+fn replace_search_file(
+    writer: &mut IndexWriter,
+    fields: &SearchFields,
+    file: &DiscoveredFile,
+) -> Result<()> {
+    writer.delete_term(Term::from_field_text(fields.doc_key, &file.relative_path));
+    let body = searchable_structured_source(&file.path, &file.extension)?;
+    writer.add_document(doc!(
+        fields.id => file_search_id(&file.relative_path),
+        fields.doc_key => file.relative_path.as_str(),
+        fields.slug => file.relative_path.as_str(),
+        fields.title => fallback_title(&file.path).as_str(),
+        fields.filename => filename_for(&file.path).as_str(),
+        fields.relative_path => file.relative_path.as_str(),
+        fields.body => body.as_str(),
+    ))?;
+    Ok(())
+}
+
+fn file_search_id(relative_path: &str) -> u64 {
+    let mut hasher = Sha256::new();
+    hasher.update(b"mvv-file-search-v1");
+    hasher.update(relative_path.as_bytes());
+    let digest = hasher.finalize();
+    u64::from_be_bytes(digest[..8].try_into().expect("sha256 digest has 8 bytes"))
+}
+
 fn first_u64(document: &TantivyDocument, field: Field) -> Option<u64> {
     document
         .get_first(field)
         .and_then(|value| match OwnedValue::from(value) {
             OwnedValue::U64(value) => Some(value),
+            _ => None,
+        })
+}
+
+fn first_text(document: &TantivyDocument, field: Field) -> Option<String> {
+    document
+        .get_first(field)
+        .and_then(|value| match OwnedValue::from(value) {
+            OwnedValue::Str(value) => Some(value),
             _ => None,
         })
 }
@@ -2551,8 +2632,7 @@ enum GroupKind {
 }
 
 fn grouped_metadata_entries(conn: &Connection, kind: GroupKind) -> Result<Vec<VaultGroupEntry>> {
-    use std::collections::BTreeMap;
-
+    let mut grouped = record_collection_groups(conn, kind)?;
     let mut statement = conn.prepare(
         r#"
         select d.title, d.relative_path, d.frontmatter_json, coalesce(f.modified_ns, 0)
@@ -2570,7 +2650,6 @@ fn grouped_metadata_entries(conn: &Connection, kind: GroupKind) -> Result<Vec<Va
         ))
     })?;
 
-    let mut grouped: BTreeMap<String, (usize, i64, String, String)> = BTreeMap::new();
     for row in rows {
         let (title, relative_path, frontmatter_json, modified_ns) = row?;
         let frontmatter = frontmatter_json
@@ -2591,11 +2670,11 @@ fn grouped_metadata_entries(conn: &Connection, kind: GroupKind) -> Result<Vec<Va
                 names.push(project);
             }
         }
-        if matches!(kind, GroupKind::Entity) && names.is_empty() {
-            names.extend(link_targets_for_document(conn, &relative_path)?);
-        }
 
         for name in names.into_iter().filter(|name| !name.trim().is_empty()) {
+            if matches!(kind, GroupKind::Entity) && looks_like_project_identifier(&name) {
+                continue;
+            }
             let entry = grouped
                 .entry(name)
                 .or_insert_with(|| (0, i64::MIN, String::new(), String::new()));
@@ -2629,6 +2708,87 @@ fn grouped_metadata_entries(conn: &Connection, kind: GroupKind) -> Result<Vec<Va
     Ok(entries)
 }
 
+fn record_collection_groups(
+    conn: &Connection,
+    kind: GroupKind,
+) -> Result<std::collections::BTreeMap<String, (usize, i64, String, String)>> {
+    let collection_path = match kind {
+        GroupKind::Entity => "records/entities.jsonl",
+        GroupKind::Project => "records/projects.jsonl",
+    };
+    let Some(file) = file_row_by_relative_path(conn, collection_path)? else {
+        return Ok(std::collections::BTreeMap::new());
+    };
+    let source = fs::read_to_string(&file.absolute_path).unwrap_or_default();
+    let modified_ns = file.modified_ns.unwrap_or(0);
+    let mut grouped = std::collections::BTreeMap::new();
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+            continue;
+        };
+        let Some(name) = record_display_name(&value, kind) else {
+            continue;
+        };
+        let entry = grouped
+            .entry(name.clone())
+            .or_insert_with(|| (0, modified_ns, name.clone(), collection_path.to_string()));
+        entry.0 += 1;
+        entry.1 = modified_ns;
+        entry.2 = name;
+        entry.3 = collection_path.to_string();
+    }
+    Ok(grouped)
+}
+
+fn record_display_name(value: &serde_json::Value, kind: GroupKind) -> Option<String> {
+    let keys: &[&str] = match kind {
+        GroupKind::Entity => &[
+            "name",
+            "title",
+            "label",
+            "entity",
+            "entity_id",
+            "id",
+            "slug",
+        ],
+        GroupKind::Project => &[
+            "name",
+            "title",
+            "label",
+            "project",
+            "project_id",
+            "id",
+            "slug",
+        ],
+    };
+    for key in keys {
+        if let Some(value) = value.get(*key).and_then(|value| value.as_str()) {
+            let value = value.trim();
+            if !value.is_empty() {
+                if matches!(kind, GroupKind::Entity) && looks_like_project_identifier(value) {
+                    continue;
+                }
+                return Some(value.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn looks_like_project_identifier(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    let bytes = lower.as_bytes();
+    bytes.len() > 8
+        && bytes.get(4) == Some(&b'-')
+        && bytes.get(7) == Some(&b'-')
+        && bytes[..4].iter().all(u8::is_ascii_digit)
+        && bytes[5..7].iter().all(u8::is_ascii_digit)
+}
+
 fn metadata_values(frontmatter: &serde_json::Value, keys: &[&str]) -> Vec<String> {
     let mut values = Vec::new();
     for key in keys {
@@ -2659,17 +2819,6 @@ fn project_from_path(relative_path: &str) -> Option<String> {
         return parts.next().map(str::to_string);
     }
     None
-}
-
-fn link_targets_for_document(conn: &Connection, relative_path: &str) -> Result<Vec<String>> {
-    let Some(slug) = document_slug_by_relative_path(conn, relative_path)? else {
-        return Ok(Vec::new());
-    };
-    collect_strings(
-        conn,
-        "select target_slug from links where source_slug = ?1 order by target_slug limit 8",
-        &slug,
-    )
 }
 
 fn daily_note_date(filename: &str, relative_path: &str) -> Option<String> {

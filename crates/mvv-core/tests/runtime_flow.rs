@@ -170,6 +170,53 @@ slug: alpha
 }
 
 #[test]
+fn searches_and_opens_jsonl_records() {
+    let temp = tempfile::tempdir().unwrap();
+    let vault = temp.path().join("vault");
+    fs::create_dir_all(vault.join("records")).unwrap();
+    fs::write(
+        vault.join("records/entities.jsonl"),
+        r#"{"id":"entity-anne","name":"Anne Meesters","kind":"person"}
+{"id":"entity-duco","name":"Duco Meesters","kind":"person"}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        vault.join("records/projects.jsonl"),
+        r#"{"id":"2025-11-smart-data-platform","name":"Smart Data Platform"}
+"#,
+    )
+    .unwrap();
+
+    let runtime = VaultRuntime::build(&vault, temp.path().join("state")).unwrap();
+
+    let hits = runtime.search("Duco", 10).unwrap();
+    assert!(hits
+        .iter()
+        .any(|hit| hit.relative_path == "records/entities.jsonl" && hit.kind == "json"));
+    let item = runtime
+        .open_item_by_relative_path("records/entities.jsonl")
+        .unwrap();
+    assert_eq!(item.kind, "json");
+    assert_eq!(item.extension, "jsonl");
+    assert!(item.formatted.unwrap().contains("Anne Meesters"));
+
+    let browser = runtime.file_browser().unwrap();
+    assert!(browser
+        .entities
+        .iter()
+        .any(|entry| entry.name == "Anne Meesters"));
+    assert!(browser
+        .projects
+        .iter()
+        .any(|entry| entry.name == "Smart Data Platform"));
+    assert!(!browser
+        .entities
+        .iter()
+        .any(|entry| entry.name == "2025-11-smart-data-platform"));
+}
+
+#[test]
 fn sync_skips_cas_blob_payload_tree() {
     let temp = tempfile::tempdir().unwrap();
     let vault = temp.path().join("vault");
