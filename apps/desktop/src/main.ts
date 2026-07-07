@@ -220,8 +220,8 @@ function render() {
   appRoot.innerHTML = `
     <section class="shell">
       <aside class="sidebar" aria-label="Vault explorer">
-        <div class="brand compact-brand">
-          <h1>Mega Vault Viewer</h1>
+        <div class="brand compact-brand" aria-label="Mega Vault Viewer">
+          <strong title="Mega Vault Viewer">MVV</strong>
           <span>${escapeHtml(formatIndexHealth())}</span>
         </div>
 
@@ -762,16 +762,22 @@ function renderVaultSetup() {
   }
 
   return `
-    <section class="setup-panel" aria-label="Vault setup">
-      <label class="field">
-        <span>Vault path</span>
-        <input id="vault-path" name="vault-path" value="${escapeAttribute(vaultPath)}" placeholder="/path/to/vault" spellcheck="false" ${appMode === "indexing" ? "disabled" : ""} />
-      </label>
+    <section class="setup-panel compact-setup-panel" aria-label="Vault setup">
+      <details class="vault-path-disclosure">
+        <summary>
+          <span>Vault</span>
+          <code title="${escapeAttribute(vaultPath)}">${escapeHtml(formatVaultName(vaultPath) || "Choose vault")}</code>
+        </summary>
+        <label class="field compact-field">
+          <span>Path</span>
+          <input id="vault-path" name="vault-path" value="${escapeAttribute(vaultPath)}" placeholder="/path/to/vault" spellcheck="false" ${appMode === "indexing" ? "disabled" : ""} />
+        </label>
+      </details>
 
       ${recentVaultButtons}
 
-      <button id="index-button" type="button" ${appMode === "indexing" ? "disabled" : ""}>
-        ${appMode === "indexing" ? "Syncing..." : currentStats ? "Sync vault" : "Open vault"}
+      <button id="index-button" class="compact-sync-button" type="button" ${appMode === "indexing" ? "disabled" : ""}>
+        ${appMode === "indexing" ? "Syncing..." : currentStats ? "Sync" : "Open"}
       </button>
 
       ${appMode === "indexing" ? `<div class="busy-state" role="status"><span class="spinner" aria-hidden="true"></span><span>Syncing vault in background</span></div>` : ""}

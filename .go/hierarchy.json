@@ -33,7 +33,8 @@
       "tasks": [
         "mvv-reader-shell-ux",
         "mvv-navigation-data-ux-redesign",
-        "mvv-daily-live-ai-ingest-contract"
+        "mvv-daily-live-ai-ingest-contract",
+        "mvv-compact-left-setup-chrome"
       ]
     },
     {
