@@ -163,6 +163,11 @@ type CalendarDay = {
   inMonth: boolean;
 };
 
+type OutlineEntry = {
+  level: number;
+  text: string;
+};
+
 const app = document.querySelector<HTMLDivElement>("#app");
 
 if (!app) {
@@ -284,7 +289,7 @@ function render() {
         </article>
       </section>
 
-      <aside class="right-rail" aria-label="Calendar and vault details">
+      <aside class="right-rail" aria-label="Calendar and outline">
         ${renderRightRail()}
       </aside>
     </section>
@@ -390,6 +395,7 @@ function renderDocumentContent() {
 function renderStructuredInspector(item: VaultItemView) {
   return `
     <section class="structured-inspector" aria-label="Structured file inspector">
+      ${item.preview_message ? `<div class="large-preview-notice"><strong>Preview mode</strong><span>${escapeHtml(item.preview_message)}</span></div>` : ""}
       <pre><code>${escapeHtml(item.formatted ?? "")}</code></pre>
       ${
         item.source !== null
@@ -479,8 +485,85 @@ function renderRightRail() {
   }
   return `
     ${renderDailyCalendar()}
+    ${renderDocumentOutlinePanel()}
     ${renderStarterVaultSummary()}
   `;
+}
+
+function renderDocumentOutlinePanel() {
+  if (!currentDocument) {
+    return `
+      <section class="document-outline-panel" aria-label="Document outline">
+        <p class="outline-eyebrow">Outline</p>
+        <p class="empty">Open a note to show chapters.</p>
+      </section>
+    `;
+  }
+
+  const entries = documentOutlineEntries(currentDocument);
+  const body = entries.length > 0
+    ? entries
+        .map(
+          (entry, index) => `
+            <button class="outline-entry is-level-${entry.level}" type="button" data-outline-index="${index}">
+              ${escapeHtml(entry.text)}
+            </button>
+          `,
+        )
+        .join("")
+    : `<p class="empty">No headings yet.</p>`;
+
+  return `
+    <section class="document-outline-panel" aria-label="Document outline">
+      <p class="outline-eyebrow">Outline</p>
+      <strong title="${escapeAttribute(currentDocument.relative_path)}">${escapeHtml(currentDocument.filename)}</strong>
+      <small>${escapeHtml(currentDocument.kind)} · ${escapeHtml(formatBytes(currentDocument.size_bytes))}</small>
+      <div class="outline-list">${body}</div>
+    </section>
+  `;
+}
+
+function documentOutlineEntries(item: VaultItemView): OutlineEntry[] {
+  if (item.html) {
+    const entries: OutlineEntry[] = [];
+    const headingPattern = /<h([1-6])[^>]*>([\s\S]*?)<\/h\1>/gi;
+    for (const match of item.html.matchAll(headingPattern)) {
+      const text = stripHtml(match[2]).trim();
+      if (text) {
+        entries.push({ level: Number(match[1]), text });
+      }
+    }
+    if (entries.length > 0) {
+      return entries.slice(0, 24);
+    }
+  }
+
+  const text = item.source ?? item.formatted ?? "";
+  const markdownEntries = text
+    .split("\n")
+    .map((line): OutlineEntry | null => {
+      const match = /^(#{1,6})\s+(.+)$/.exec(line.trim());
+      return match ? { level: match[1].length, text: match[2].replace(/[#`*_]/g, "").trim() } : null;
+    })
+    .filter((entry): entry is OutlineEntry => entry !== null)
+    .slice(0, 24);
+  if (markdownEntries.length > 0) {
+    return markdownEntries;
+  }
+
+  if (["json", "jsonl", "yaml", "yml"].includes(item.extension)) {
+    return [
+      { level: 1, text: item.preview_message ? "Bounded preview" : "Structured data" },
+      { level: 2, text: item.relative_path },
+      { level: 2, text: item.source === null ? "Raw source not loaded" : "Raw source available" },
+    ];
+  }
+
+  return [];
+}
+
+function stripHtml(value: string) {
+  return value.replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"');
 }
 
 function renderDailyCalendar() {
@@ -760,6 +843,13 @@ function bindEvents() {
       resetSearchState();
       render();
     }
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-outline-index]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const index = Number(button.dataset.outlineIndex ?? "-1");
+      const headings = document.querySelectorAll<HTMLElement>(".document-body h1, .document-body h2, .document-body h3, .document-body h4, .document-body h5, .document-body h6");
+      headings[index]?.scrollIntoView({ block: "start", behavior: "smooth" });
+    });
   });
   document.querySelectorAll<HTMLButtonElement>("[data-calendar-action]").forEach((button) => {
     button.addEventListener("click", () => {

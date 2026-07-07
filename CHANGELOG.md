@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Moved edit-mode Save/Cancel actions into the top document header; the bottom editor footer is now passive path/save-state only.
 - Reworked the sidebar shell with a compact command navigator, removed the duplicate right-rail Vault card under the calendar, and changed search to submit-on-Enter/Search with background status instead of searching on every typed character.
 - Removed the remaining sidebar navigation strip: Today, Timeline, Entities, Projects, and Detail are no longer rendered in the left rail; the sidebar now goes straight from query to Files.
+- Added a right-rail document outline under the calendar and guarded large JSON/JSONL/YAML opens with bounded previews so files like `records/sources.jsonl` no longer load or render hundreds of megabytes in the app.
 
 ## [0.1.1] - 2026-07-07
 

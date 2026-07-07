@@ -966,3 +966,44 @@ Markdown body.
         .iter()
         .any(|hit| hit.relative_path == "system/settings.yaml" && hit.kind == "yaml"));
 }
+
+#[test]
+fn large_structured_files_open_as_bounded_previews() {
+    let temp = tempfile::tempdir().unwrap();
+    let vault = temp.path().join("vault");
+    let records = vault.join("records");
+    fs::create_dir_all(&records).unwrap();
+
+    let mut source = String::new();
+    for index in 0..25_000 {
+        source.push_str(&format!(
+            r#"{{"id":"source-{index}","record_type":"source","title":"Session {index}","content_md":"{}"}}"#,
+            "x".repeat(120)
+        ));
+        source.push('\n');
+    }
+    assert!(source.len() > 2 * 1024 * 1024);
+    fs::write(records.join("sources.jsonl"), source).unwrap();
+
+    let runtime = VaultRuntime::build(&vault, temp.path().join("state")).unwrap();
+    let item = runtime
+        .open_item_by_relative_path("records/sources.jsonl")
+        .unwrap();
+
+    assert_eq!(item.filename, "sources.jsonl");
+    assert_eq!(item.kind, "json");
+    assert_eq!(item.source, None);
+    assert!(item
+        .preview_message
+        .as_deref()
+        .unwrap_or_default()
+        .contains("bounded preview"));
+    let formatted = item.formatted.as_deref().unwrap_or_default();
+    assert!(formatted.contains("Large jsonl file"));
+    assert!(formatted.contains("Showing first 80 lines"));
+    assert!(
+        formatted.len() < 80_000,
+        "large preview should stay bounded, got {} bytes",
+        formatted.len()
+    );
+}

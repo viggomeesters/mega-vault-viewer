@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -22,6 +23,8 @@ use tantivy::{doc, Index, IndexWriter, Term};
 use walkdir::WalkDir;
 
 const PARSER_VERSION: &str = "mvv-core-parser-v1";
+const STRUCTURED_INLINE_PREVIEW_LIMIT_BYTES: i64 = 2 * 1024 * 1024;
+const STRUCTURED_LARGE_PREVIEW_LINES: usize = 80;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct VaultStats {
@@ -750,6 +753,10 @@ impl VaultRuntime {
     }
 
     fn open_text_item(&self, file: &FileRow, path: &Path) -> VaultItemView {
+        if file.size_bytes > STRUCTURED_INLINE_PREVIEW_LIMIT_BYTES {
+            return open_large_text_item_preview(file, path);
+        }
+
         match fs::read_to_string(path) {
             Ok(source) => {
                 let formatted = format_structured_source(&source, &file.extension);
@@ -1581,8 +1588,19 @@ fn is_searchable_structured_extension(extension: &str) -> bool {
 }
 
 fn searchable_structured_source(path: &Path, extension: &str) -> Result<String> {
+    let size = fs::metadata(path)
+        .with_context(|| format!("metadata {}", path.display()))?
+        .len() as i64;
+    if size > STRUCTURED_INLINE_PREVIEW_LIMIT_BYTES {
+        let (preview, _, truncated) = read_text_preview_lines(path, 1_000)?;
+        let suffix = if truncated { "\n…" } else { "" };
+        return Ok(format!(
+            "Large {extension} file searchable preview\n{preview}{suffix}"
+        ));
+    }
+
     let source = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    if extension == "json" {
+    if is_searchable_structured_extension(extension) {
         return Ok(format_structured_source(&source, extension).unwrap_or(source));
     }
     Ok(source)
@@ -2475,6 +2493,86 @@ fn open_image_item(file: &FileRow, path: &Path) -> VaultItemView {
             item
         }
         Err(error) => vault_item_error(file, path, format!("Could not read image: {error}")),
+    }
+}
+
+fn format_bytes_short(bytes: i64) -> String {
+    let units = ["B", "KB", "MB", "GB", "TB"];
+    let mut value = bytes.max(0) as f64;
+    let mut unit_index = 0usize;
+    while value >= 1024.0 && unit_index < units.len() - 1 {
+        value /= 1024.0;
+        unit_index += 1;
+    }
+    if unit_index == 0 {
+        format!("{} {}", bytes.max(0), units[unit_index])
+    } else if value >= 10.0 {
+        format!("{value:.0} {}", units[unit_index])
+    } else {
+        format!("{value:.1} {}", units[unit_index])
+    }
+}
+
+fn read_text_preview_lines(path: &Path, line_limit: usize) -> Result<(String, usize, bool)> {
+    let handle = fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
+    let reader = BufReader::new(handle);
+    let mut lines = Vec::new();
+    let mut truncated = false;
+    for (index, line) in reader.lines().enumerate() {
+        if index >= line_limit {
+            truncated = true;
+            break;
+        }
+        lines.push(line.with_context(|| format!("read {}", path.display()))?);
+    }
+    let shown = lines.len();
+    Ok((lines.join("\n"), shown, truncated))
+}
+
+fn open_large_text_item_preview(file: &FileRow, path: &Path) -> VaultItemView {
+    let read_result = read_text_preview_lines(path, STRUCTURED_LARGE_PREVIEW_LINES);
+
+    let (preview, shown, truncated_by_line_limit) = match read_result {
+        Ok(result) => result,
+        Err(error) => (format!("Could not read preview: {error}"), 0, false),
+    };
+    let mut preview = preview;
+    if truncated_by_line_limit {
+        preview.push_str("\n…");
+    }
+    let preview_message = format!(
+        "Large {} file ({}) opened as a bounded preview. Full raw source is not loaded into the app; use Open for the source file.",
+        file.extension,
+        format_bytes_short(file.size_bytes)
+    );
+
+    VaultItemView {
+        document_id: None,
+        slug: String::new(),
+        title: fallback_title(path),
+        filename: filename_for(path),
+        stem: stem_for(path),
+        path: path.to_path_buf(),
+        relative_path: file.relative_path.clone(),
+        kind: file.kind.clone(),
+        extension: file.extension.clone(),
+        size_bytes: file.size_bytes,
+        modified_at: file.modified_ns.and_then(nanos_to_secs),
+        html: None,
+        formatted: Some(format!(
+            "// {preview_message}\n// Showing first {shown} lines.\n\n{preview}"
+        )),
+        source: None,
+        media_data_url: None,
+        media_mime: None,
+        preview_message: Some(preview_message),
+        frontmatter: None,
+        frontmatter_error: None,
+        outgoing_links: Vec::new(),
+        backlinks: Vec::new(),
+        can_edit_source: false,
+        can_open_system: true,
+        error: None,
     }
 }
 
