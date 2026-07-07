@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Made JSON/JSONL files searchable and readable in the app, and split Entities from Projects so project identifiers like `2025-11-smart-data-platform` do not appear as entities.
 - Made daily notes calendar-first: clicking a missing date creates `daily/YYYY-MM-DD.md`, daily notes open in autosave edit mode, MVV stamps `last_updated`, and calendar AI status turns green only when `ai_processed_at >= last_updated`.
 - Reduced the top-left setup chrome: the sidebar now uses a small MVV/status bar and compact vault disclosure/sync controls instead of a large permanent product title and full-width setup card.
+- Polished edit mode layout: metadata chrome is hidden while editing, the textarea owns the scrollbar, the save footer no longer floats over content, scrollbars are dark, and sidebar search/navigation controls are calmer.
 
 ## [0.1.1] - 2026-07-07
 

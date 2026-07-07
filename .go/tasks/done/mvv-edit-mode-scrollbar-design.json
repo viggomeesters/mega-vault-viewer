@@ -1,0 +1,34 @@
+{
+  "schema": "go-workflow.repo-local.task.v1",
+  "kind": "task",
+  "id": "mvv-edit-mode-scrollbar-design",
+  "project": "mega-vault-viewer",
+  "status": "done",
+  "summary": "Polish edit-mode scrollbar and sidebar density",
+  "description": "Fix edit-mode frontend design complaints: the editor scrollbar should belong to the editor surface, footer controls must not overlap content, and sidebar search/nav controls should be calmer/less oversized.",
+  "scope": {
+    "read": [
+      "apps/desktop/src/main.ts;apps/desktop/src/styles.css"
+    ],
+    "modify": [
+      "apps/desktop/src/main.ts;apps/desktop/src/styles.css;CHANGELOG.md;.go/**"
+    ]
+  },
+  "acceptance": [
+    "Edit mode uses one coherent editor scroll area; save/cancel footer does not cover note text; sidebar search/nav controls are visually smaller and less heavy; browser smoke proves no blank page and relevant layout dimensions."
+  ],
+  "verification": [
+    "npm --workspace apps/desktop run build; npm run check; browser DOM/vision smoke"
+  ],
+  "claim": {
+    "agent": "hermes",
+    "claimed_at": "2026-07-07T12:43:19+02:00"
+  },
+  "evidence": [
+    {
+      "created_at": "2026-07-07T12:50:27+02:00",
+      "agent": "hermes",
+      "summary": "Frontend design/edit-mode fix complete. Edit mode now hides Item/Frontmatter/Links metadata chrome, document-pane uses edit-specific rows auto/minmax(0,1fr), document-body hides overflow, textarea owns scroll with dark scrollbar, footer is below editor without overlap, sidebar search/nav controls are smaller. Verification: npm --workspace apps/desktop run build; browser DOM forced edit smoke blank=false paneRows='67px 510px' bodyOverflow=hidden textareaOverflow=auto textareaScrollable=true footerOverlapsTextarea=false searchHeight=34 tabHeight=28; browser visual smoke; npm run check; go validate."
+    }
+  ]
+}

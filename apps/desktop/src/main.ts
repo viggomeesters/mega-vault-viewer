@@ -237,7 +237,7 @@ function render() {
         </div>
       </aside>
 
-      <section class="document-pane" aria-label="Current document">
+      <section class="document-pane ${isEditing ? "is-editing" : ""}" aria-label="Current document">
         <p class="sr-only" aria-live="polite">${escapeHtml(statusText)}</p>
         <header class="document-header">
           <div class="document-heading">
@@ -264,9 +264,9 @@ function render() {
           </div>
         </header>
 
-        ${currentDocument ? renderItemDetailsPanel(currentDocument) : ""}
-        ${currentDocument && isMarkdownItem(currentDocument) ? renderMetadataPanel(currentDocument) : ""}
-        ${currentDocument && isMarkdownItem(currentDocument) ? renderLinkPanel(currentDocument) : ""}
+        ${currentDocument && !isEditing ? renderItemDetailsPanel(currentDocument) : ""}
+        ${currentDocument && !isEditing && isMarkdownItem(currentDocument) ? renderMetadataPanel(currentDocument) : ""}
+        ${currentDocument && !isEditing && isMarkdownItem(currentDocument) ? renderLinkPanel(currentDocument) : ""}
 
         <article class="document-body ${isEditing ? "is-editing" : ""}">
           ${renderDocumentContent()}
