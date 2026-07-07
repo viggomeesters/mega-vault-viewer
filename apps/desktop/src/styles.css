@@ -20,7 +20,9 @@
 body {
   margin: 0;
   min-width: 320px;
+  height: 100vh;
   min-height: 100vh;
+  overflow: hidden;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.045), transparent 38%),
     #101214;
@@ -60,17 +62,31 @@ a:focus-visible {
   outline-offset: 2px;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
 .shell {
   display: grid;
   grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
-  min-height: 100vh;
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .sidebar {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 18px;
+  height: 100vh;
+  min-height: 0;
+  gap: 16px;
+  overflow: hidden;
   border-right: 1px solid #272d33;
   background: #171a1e;
   padding: 22px;
@@ -92,13 +108,6 @@ a:focus-visible {
   font-size: 25px;
 }
 
-.document-title {
-  margin: 8px 0 0;
-  color: #9ba7b2;
-  font-size: 14px;
-  line-height: 1.35;
-  overflow-wrap: anywhere;
-}
 
 .eyebrow,
 .status {
@@ -131,7 +140,8 @@ a:focus-visible {
 
 .setup-panel,
 .vault-summary,
-.starter-summary {
+.starter-summary,
+.vault-switcher {
   display: grid;
   gap: 12px;
 }
@@ -153,16 +163,54 @@ a:focus-visible {
 
 .vault-summary span,
 .vault-summary small,
+.vault-switcher span,
+.vault-switcher small,
 .busy-state,
 .error-text {
   color: #99a6b1;
   font-size: 12px;
 }
 
-.vault-summary span {
+.vault-summary span,
+.vault-switcher span {
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.vault-path {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vault-switcher div {
+  display: grid;
+  gap: 7px;
+}
+
+.vault-preset {
+  display: grid;
+  min-height: 44px;
+  min-width: 0;
+  gap: 2px;
+  border-color: #2d353c;
+  background: #111417;
+  color: #edf1f5;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.vault-preset:hover {
+  background: #1f252a;
+}
+
+.vault-preset strong,
+.vault-preset small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .vault-summary strong {
@@ -393,8 +441,11 @@ a:focus-visible {
 
 .results {
   display: grid;
+  min-height: 0;
+  flex: 1 1 auto;
   gap: 8px;
   overflow: auto;
+  padding-right: 2px;
 }
 
 .sidebar-section,
@@ -555,9 +606,11 @@ a:focus-visible {
 
 .document-pane {
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  height: 100vh;
   min-width: 0;
-  min-height: 100vh;
+  min-height: 0;
+  grid-template-rows: auto auto auto auto minmax(0, 1fr);
+  overflow: hidden;
 }
 
 .document-header {
@@ -567,7 +620,28 @@ a:focus-visible {
   justify-content: space-between;
   gap: 20px;
   border-bottom: 1px solid #272d33;
-  padding: 22px 28px;
+  background: rgba(19, 23, 26, 0.96);
+  padding: 20px 28px 18px;
+}
+
+.document-heading {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+}
+
+.document-heading code {
+  width: fit-content;
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid #2d353c;
+  border-radius: 999px;
+  background: #111417;
+  color: #9ba7b2;
+  padding: 3px 8px;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .document-actions {
@@ -619,14 +693,6 @@ a:focus-visible {
   color: #65717c;
 }
 
-.document-header code {
-  max-width: 100%;
-  overflow: hidden;
-  color: #9ba7b2;
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 .metadata-panel,
 .link-panel {
@@ -712,7 +778,9 @@ a:focus-visible {
 
 .document-body {
   min-width: 0;
+  min-height: 0;
   overflow: auto;
+  overscroll-behavior: contain;
   padding: 34px 28px 52px;
   color: #e7edf2;
   font-size: 16px;
@@ -1088,9 +1156,27 @@ a:focus-visible {
     grid-template-columns: 1fr;
   }
 
+  body {
+    height: auto;
+    overflow: auto;
+  }
+
+  .shell {
+    height: auto;
+    overflow: visible;
+  }
+
   .sidebar {
+    height: auto;
+    overflow: visible;
     border-right: 0;
     border-bottom: 1px solid #272d33;
+  }
+
+  .document-pane {
+    height: auto;
+    min-height: 70vh;
+    overflow: visible;
   }
 
   .document-header,

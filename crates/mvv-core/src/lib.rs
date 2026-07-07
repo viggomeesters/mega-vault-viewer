@@ -25,6 +25,7 @@ const PARSER_VERSION: &str = "mvv-core-parser-v1";
 pub struct VaultStats {
     pub documents: usize,
     pub links: usize,
+    pub vault_size_bytes: i64,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -326,7 +327,16 @@ impl VaultRuntime {
         let conn = self.open_db()?;
         let documents = conn.query_row("select count(*) from documents", [], |row| row.get(0))?;
         let links = conn.query_row("select count(*) from links", [], |row| row.get(0))?;
-        Ok(VaultStats { documents, links })
+        let vault_size_bytes = conn.query_row(
+            "select coalesce(sum(size_bytes), 0) from files where status = 'indexed'",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(VaultStats {
+            documents,
+            links,
+            vault_size_bytes,
+        })
     }
 
     pub fn index_summary(&self) -> IndexSummary {
@@ -577,11 +587,28 @@ impl VaultRuntime {
         let conn = self.open_db()?;
         let relative_path = conn
             .query_row(
-                "select relative_path from files where status = 'indexed' order by relative_path limit 1",
+                r#"
+                select relative_path from files
+                where status = 'indexed'
+                  and kind = 'markdown'
+                  and relative_path glob 'daily/????-??-??.md'
+                order by relative_path desc
+                limit 1
+                "#,
                 [],
                 |row| row.get::<_, String>(0),
             )
             .optional()?;
+        let relative_path = match relative_path {
+            Some(path) => Some(path),
+            None => conn
+                .query_row(
+                    "select relative_path from files where status = 'indexed' order by relative_path limit 1",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?,
+        };
         relative_path
             .map(|relative_path| self.open_item_by_relative_path(&relative_path))
             .transpose()
@@ -2372,18 +2399,20 @@ fn folder_entries(files: &[FileBrowserItem]) -> Vec<FolderEntry> {
 
     let mut grouped: BTreeMap<String, Vec<FileBrowserItem>> = BTreeMap::new();
     for file in files {
-        let folder = Path::new(&file.relative_path)
-            .parent()
-            .map(|path| path.to_string_lossy().replace('\\', "/"))
-            .filter(|path| !path.is_empty())
-            .unwrap_or_else(|| "/".to_string());
+        let folder = top_level_folder(&file.relative_path);
         grouped.entry(folder).or_default().push(file.clone());
     }
 
     let mut folders = grouped
         .into_iter()
         .map(|(path, mut files)| {
-            files.sort_by(|a, b| a.filename.cmp(&b.filename));
+            files.sort_by(|a, b| {
+                b.modified_at
+                    .or(b.created_at)
+                    .unwrap_or(0)
+                    .cmp(&a.modified_at.or(a.created_at).unwrap_or(0))
+                    .then_with(|| a.relative_path.cmp(&b.relative_path))
+            });
             let document_count = files.len();
             files.truncate(8);
             FolderEntry {
@@ -2393,9 +2422,28 @@ fn folder_entries(files: &[FileBrowserItem]) -> Vec<FolderEntry> {
             }
         })
         .collect::<Vec<_>>();
-    folders.sort_by(|a, b| a.path.cmp(&b.path));
+    folders.sort_by(|a, b| {
+        if a.path == "daily" && b.path != "daily" {
+            return std::cmp::Ordering::Less;
+        }
+        if b.path == "daily" && a.path != "daily" {
+            return std::cmp::Ordering::Greater;
+        }
+        b.document_count
+            .cmp(&a.document_count)
+            .then_with(|| a.path.cmp(&b.path))
+    });
     folders.truncate(80);
     folders
+}
+
+fn top_level_folder(relative_path: &str) -> String {
+    relative_path
+        .split('/')
+        .next()
+        .filter(|part| !part.is_empty() && *part != relative_path)
+        .unwrap_or("/")
+        .to_string()
 }
 
 fn daily_note_entries(files: &[FileBrowserItem]) -> Vec<DailyNoteEntry> {
@@ -2571,15 +2619,26 @@ fn link_targets_for_document(conn: &Connection, relative_path: &str) -> Result<V
 }
 
 fn daily_note_date(filename: &str, relative_path: &str) -> Option<String> {
-    if !filename.ends_with("-daily.md") || !relative_path.starts_with("10_notes/") {
+    if !relative_path.starts_with("daily/") || !filename.ends_with(".md") {
         return None;
     }
-    let date = filename.get(0..8)?;
-    if !date.chars().all(|character| character.is_ascii_digit()) {
+    let date = filename.strip_suffix(".md")?;
+    if date.len() != 10 {
+        return None;
+    }
+    let bytes = date.as_bytes();
+    if bytes.get(4) != Some(&b'-') || bytes.get(7) != Some(&b'-') {
+        return None;
+    }
+    if !date
+        .chars()
+        .enumerate()
+        .all(|(index, character)| matches!(index, 4 | 7) || character.is_ascii_digit())
+    {
         return None;
     }
 
-    Some(format!("{}-{}-{}", &date[0..4], &date[4..6], &date[6..8]))
+    Some(date.to_string())
 }
 
 fn system_time_seconds(time: std::time::SystemTime) -> Option<u64> {

@@ -1,0 +1,46 @@
+{
+  "schema": "go-workflow.repo-local.hierarchy.v1",
+  "kind": "hierarchy",
+  "project": "mega-vault-viewer",
+  "epics": [
+    {
+      "id": "workflow",
+      "title": "Workflow",
+      "features": [
+        {
+          "id": "repo-local-workflow",
+          "title": "Repo-local workflow",
+          "tasks": []
+        }
+      ],
+      "tasks": []
+    },
+    {
+      "id": "vault-runtime",
+      "title": "JSONL-vault runtime model",
+      "description": "Align core runtime with jsonl-vault daily and CAS conventions.",
+      "features": [],
+      "tasks": [
+        "mvv-jsonl-vault-runtime"
+      ]
+    },
+    {
+      "id": "reader-shell",
+      "title": "Reader shell UX",
+      "description": "Make the desktop shell calmer, persistent, and independently scrollable.",
+      "features": [],
+      "tasks": [
+        "mvv-reader-shell-ux"
+      ]
+    },
+    {
+      "id": "workflow-readiness",
+      "title": "Workflow and repo readiness",
+      "description": "Install repo-local .go state, vision, and repo-complete proof.",
+      "features": [],
+      "tasks": [
+        "mvv-repo-complete-go"
+      ]
+    }
+  ]
+}

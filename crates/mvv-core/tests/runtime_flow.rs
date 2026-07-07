@@ -42,11 +42,13 @@ Backlinked content for the local viewer.
 "#,
     )
     .unwrap();
+    let daily = vault.join("daily");
+    fs::create_dir_all(&daily).unwrap();
     fs::write(
-        notes.join("20260619-0600-daily.md"),
+        daily.join("2026-06-19.md"),
         r#"---
 title: Daily
-slug: 20260619-0600-daily
+slug: 2026-06-19
 ---
 
 # Daily
@@ -96,7 +98,9 @@ slug: 20260619-0600-daily
     assert!(browser
         .folders
         .iter()
-        .any(|folder| folder.path == "10_notes/2026-06" && folder.document_count == 3));
+        .any(|folder| folder.path == "10_notes" && folder.document_count == 2));
+    assert_eq!(browser.folders[0].path, "daily");
+    assert_eq!(browser.folders[0].document_count, 1);
     assert!(browser
         .newest_files
         .iter()
@@ -106,9 +110,13 @@ slug: 20260619-0600-daily
         .iter()
         .any(|file| file.relative_path == "10_notes/2026-06/20260617-0900-alpha.md"));
     assert!(browser.daily_notes.iter().any(|daily| {
-        daily.date == "2026-06-19"
-            && daily.relative_path == "10_notes/2026-06/20260619-0600-daily.md"
+        daily.date == "2026-06-19" && daily.relative_path == "daily/2026-06-19.md"
     }));
+    assert_eq!(
+        runtime.first_item().unwrap().unwrap().relative_path,
+        "daily/2026-06-19.md"
+    );
+    assert!(runtime.stats().unwrap().vault_size_bytes > 0);
 }
 
 #[test]

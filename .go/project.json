@@ -1,0 +1,18 @@
+{
+  "schema": "go-workflow.repo-local.project.v1",
+  "kind": "project",
+  "id": "mega-vault-viewer",
+  "name": "Mega Vault Viewer",
+  "source_of_truth": "repo-local",
+  "default_verification": [
+    "cargo test --workspace",
+    "cargo clippy --all-targets -- -D warnings",
+    "npm test --if-present",
+    "npm run build --if-present",
+    "npm run check"
+  ],
+  "links": {
+    "repo": "https://github.com/viggomeesters/mega-vault-viewer",
+    "vision": "docs/vision.md"
+  }
+}

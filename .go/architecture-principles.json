@@ -1,0 +1,31 @@
+{
+  "schema": "go-workflow.repo-local.architecture-principles.v1",
+  "kind": "architecture_principles",
+  "project": "mega-vault-viewer",
+  "principles": [
+    {
+      "id": "vault-canonical",
+      "statement": "Source vault files are canonical; runtime state is rebuildable.",
+      "rationale": "Mega Vault Viewer must never become a hidden second source of truth.",
+      "enforcement": "Tests assert runtime state stays outside the vault and CAS/media rendering avoids duplicate preview payloads."
+    },
+    {
+      "id": "jsonl-vault-layout",
+      "statement": "JSONL-vault daily notes live at daily/YYYY-MM-DD.md and CAS blobs at blobs/sha256/<first2>/<hash>.",
+      "rationale": "The viewer must match the actual Life OS/jsonl-vault shape instead of old 10_notes conventions.",
+      "enforcement": "Runtime flow tests assert daily detection and CAS rendering from those paths."
+    },
+    {
+      "id": "calm-reader-shell",
+      "statement": "The app shell separates navigation scroll from document scroll and avoids redundant title/status chrome.",
+      "rationale": "Large notes and large vault sidebars must remain usable without the whole app scrolling as one slab.",
+      "enforcement": "CSS layout uses fixed-height grid regions and independent overflow containers."
+    },
+    {
+      "id": "repo-local-go-state",
+      "statement": "Project workflow state lives in .go/ next to code.",
+      "rationale": "A fresh clone should explain current direction and next work without chat memory.",
+      "enforcement": "go-workflow-stack validate/readback and repo-local tasks/evidence."
+    }
+  ]
+}

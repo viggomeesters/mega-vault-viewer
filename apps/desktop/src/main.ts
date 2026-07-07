@@ -6,6 +6,7 @@ import "./styles.css";
 type VaultStats = {
   documents: number;
   links: number;
+  vault_size_bytes: number;
 };
 
 type IndexSummary = {
@@ -197,10 +198,13 @@ let watchDebounceTimer: number | null = null;
 let watchUnlisten: UnlistenFn | null = null;
 let watchErrorUnlisten: UnlistenFn | null = null;
 let indexHealth: IndexHealth = "idle";
+let rememberedVaults: string[] = [];
 
 const AUTO_REFRESH_MS = 10 * 60 * 1000;
 const WATCH_DEBOUNCE_MS = 1200;
 const EDIT_AUTOSAVE_DEBOUNCE_MS = 900;
+const LAST_VAULT_STORAGE_KEY = "mega-vault-viewer:last-vault";
+const RECENT_VAULTS_STORAGE_KEY = "mega-vault-viewer:recent-vaults";
 
 const formatScore = new Intl.NumberFormat("en", {
   maximumFractionDigits: 2,
@@ -235,11 +239,11 @@ function render() {
       </aside>
 
       <section class="document-pane" aria-label="Current document">
+        <p class="sr-only" aria-live="polite">${escapeHtml(statusText)}</p>
         <header class="document-header">
-          <div>
-            <p class="status">${escapeHtml(statusText)}</p>
+          <div class="document-heading">
             <h2>${escapeHtml(currentDocument?.filename ?? "No document open")}</h2>
-            ${currentDocument ? `<p class="document-title">${escapeHtml(currentDocument.title)}</p>` : ""}
+            ${currentDocument ? `<code title="${escapeAttribute(currentDocument.path)}">${escapeHtml(currentDocument.relative_path)}</code>` : ""}
           </div>
           <div class="document-actions">
             <div class="document-action-row">
@@ -258,7 +262,6 @@ function render() {
                 <button id="forward-button" type="button" title="Forward" aria-label="Forward" ${forwardStack.length === 0 || isSaving ? "disabled" : ""}>&gt;</button>
               </div>
             </div>
-            <code title="${escapeAttribute(currentDocument?.path ?? "mvv://local")}">${escapeHtml(currentDocument?.relative_path ?? "mvv://local")}</code>
           </div>
         </header>
 
@@ -714,6 +717,7 @@ function renderFileItem(file: FileBrowserItem) {
 }
 
 function renderVaultSetup() {
+  const recentVaultButtons = renderRecentVaultButtons();
   if (appMode === "ready" && !showVaultSetup) {
     return `
       <section class="vault-summary" aria-label="Current vault">
@@ -721,10 +725,11 @@ function renderVaultSetup() {
           <span>Current vault</span>
           <strong title="${escapeAttribute(vaultPath)}">${escapeHtml(formatVaultName(vaultPath))}</strong>
           <small>${escapeHtml(formatVaultSummary())}</small>
+          <small class="vault-path" title="${escapeAttribute(vaultPath)}">${escapeHtml(vaultPath)}</small>
         </div>
         <div class="compact-actions">
           <button id="reset-index-button" class="secondary-button" type="button" title="Reset rebuildable cache only" ${isRefreshing ? "disabled" : ""}>Reset cache</button>
-          <button id="change-vault-button" class="secondary-button" type="button">Change</button>
+          <button id="change-vault-button" class="secondary-button" type="button">Switch vault</button>
         </div>
       </section>
     `;
@@ -734,8 +739,10 @@ function renderVaultSetup() {
     <section class="setup-panel" aria-label="Vault setup">
       <label class="field">
         <span>Vault path</span>
-        <input id="vault-path" name="vault-path" value="${escapeAttribute(vaultPath)}" spellcheck="false" ${appMode === "indexing" ? "disabled" : ""} />
+        <input id="vault-path" name="vault-path" value="${escapeAttribute(vaultPath)}" placeholder="/path/to/vault" spellcheck="false" ${appMode === "indexing" ? "disabled" : ""} />
       </label>
+
+      ${recentVaultButtons}
 
       <button id="index-button" type="button" ${appMode === "indexing" ? "disabled" : ""}>
         ${appMode === "indexing" ? "Syncing..." : currentStats ? "Sync vault" : "Open vault"}
@@ -743,6 +750,30 @@ function renderVaultSetup() {
 
       ${appMode === "indexing" ? `<div class="busy-state" role="status"><span class="spinner" aria-hidden="true"></span><span>Syncing vault in background</span></div>` : ""}
       ${appMode === "error" ? `<p class="error-text">${escapeHtml(lastError)}</p>` : ""}
+    </section>
+  `;
+}
+
+function renderRecentVaultButtons() {
+  const vaults = rememberedVaults.filter((path) => path && path !== vaultPath).slice(0, 4);
+  if (vaults.length === 0) {
+    return "";
+  }
+  return `
+    <section class="vault-switcher" aria-label="Recent vaults">
+      <span>Recent vaults</span>
+      <div>
+        ${vaults
+          .map(
+            (path) => `
+              <button class="vault-preset" type="button" data-vault-preset="${escapeAttribute(path)}" title="${escapeAttribute(path)}">
+                <strong>${escapeHtml(formatVaultName(path))}</strong>
+                <small>${escapeHtml(path)}</small>
+              </button>
+            `,
+          )
+          .join("")}
+      </div>
     </section>
   `;
 }
@@ -793,6 +824,15 @@ function bindEvents() {
   });
   document.querySelector<HTMLInputElement>("#vault-path")?.addEventListener("input", (event) => {
     vaultPath = (event.target as HTMLInputElement).value;
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-vault-preset]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const preset = button.dataset.vaultPreset;
+      if (preset) {
+        vaultPath = preset;
+        void indexVault();
+      }
+    });
   });
   document.querySelector<HTMLInputElement>("#search-box")?.addEventListener("keydown", (event) => {
     currentSearchQuery = (event.target as HTMLInputElement).value;
@@ -879,7 +919,10 @@ function bindEvents() {
 }
 
 async function loadDefaultPath() {
-  vaultPath = await invoke<string>("default_vault_path");
+  rememberedVaults = loadRememberedVaults();
+  const storedVault = window.localStorage.getItem(LAST_VAULT_STORAGE_KEY) ?? "";
+  const defaultVault = await invoke<string>("default_vault_path");
+  vaultPath = storedVault || defaultVault;
   render();
 }
 
@@ -895,6 +938,7 @@ async function indexVault() {
     const snapshot = await invoke<IndexSnapshot>("index_vault", { vaultPath });
     currentStats = snapshot.stats;
     currentDocument = snapshot.first_item;
+    rememberVault(vaultPath);
     fileBrowserSnapshot = await invoke<FileBrowserSnapshot>("file_browser");
     resetEditState();
     backStack = [];
@@ -1378,6 +1422,25 @@ function escapeAttribute(value: string) {
   return escapeHtml(value).replaceAll("'", "&#39;");
 }
 
+function loadRememberedVaults() {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(RECENT_VAULTS_STORAGE_KEY) ?? "[]");
+    return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberVault(path: string) {
+  const trimmed = path.trim();
+  if (!trimmed) {
+    return;
+  }
+  rememberedVaults = [trimmed, ...rememberedVaults.filter((vault) => vault !== trimmed)].slice(0, 8);
+  window.localStorage.setItem(LAST_VAULT_STORAGE_KEY, trimmed);
+  window.localStorage.setItem(RECENT_VAULTS_STORAGE_KEY, JSON.stringify(rememberedVaults));
+}
+
 function formatVaultName(path: string) {
   const parts = path.split(/[\\/]/).filter(Boolean);
   return parts.at(-1) ?? path;
@@ -1388,7 +1451,7 @@ function formatStats(stats: VaultStats | null) {
     return "Not synced";
   }
 
-  return `${stats.documents} docs, ${stats.links} links`;
+  return `${stats.documents} docs, ${stats.links} links, ${formatGigabytes(stats.vault_size_bytes)}`;
 }
 
 function formatVaultSummary() {
@@ -1443,6 +1506,10 @@ function formatDateTime(timestampSeconds: number) {
     dateStyle: "medium",
     timeStyle: "short",
   });
+}
+
+function formatGigabytes(bytes: number) {
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
 function formatBytes(bytes: number) {

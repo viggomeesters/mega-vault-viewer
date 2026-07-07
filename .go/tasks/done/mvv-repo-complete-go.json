@@ -1,0 +1,34 @@
+{
+  "schema": "go-workflow.repo-local.task.v1",
+  "kind": "task",
+  "id": "mvv-repo-complete-go",
+  "project": "mega-vault-viewer",
+  "status": "done",
+  "summary": "Install repo-local .go vision/tasks and run repo-complete validation",
+  "description": "Keep .go state clone-readable, add product vision doc, validate go workflow state, and run repo-complete check/plan for public readiness.",
+  "scope": {
+    "read": [
+      ".go/**;docs/**;README.md;AGENTS.md"
+    ],
+    "modify": [
+      ".go/**;docs/vision.md"
+    ]
+  },
+  "acceptance": [
+    ".go validates; readback is useful; repo-complete report is captured as evidence"
+  ],
+  "verification": [
+    "python3 ~/github/go-workflow-stack/cli/go.py validate .;python3 ~/github/go-workflow-stack/cli/go.py readback .;python3 /home/viggo/github/viggo-agent-skills/scripts/repo_complete_bootstrap.py --path . --mode check --profile local --json-schema"
+  ],
+  "claim": {
+    "agent": "hermes",
+    "claimed_at": "2026-07-07T10:23:53+02:00"
+  },
+  "evidence": [
+    {
+      "created_at": "2026-07-07T10:29:10+02:00",
+      "agent": "hermes",
+      "summary": "Installed/validated repo-local .go state, wrote docs/vision.md and schema-valid docs/vision.json; repo-complete local check status JA; go validate/readback passed."
+    }
+  ]
+}

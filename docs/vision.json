@@ -1,0 +1,75 @@
+{
+  "$schema": "https://viggomeesters.github.io/schemas/repo-vision-contract.schema.json",
+  "schema_version": "1.0.0",
+  "artifact_kind": "repo_design_vision_contract",
+  "repo": {
+    "name": "Mega Vault Viewer",
+    "primary_users": ["power users", "agents", "local-first vault maintainers"],
+    "product_surface": "local_first_desktop_vault_viewer"
+  },
+  "vision": {
+    "one_line": "A calm local-first reader/search/navigation surface for large filesystem knowledge vaults.",
+    "north_star": "Mega Vault Viewer is the calm, local-first read/view/search surface for filesystem knowledge vaults where source files stay canonical and runtime indexes are disposable.",
+    "promise": "Open a vault once, keep it remembered, browse the real top-level structure, jump through daily notes, and read rich Markdown/CAS media from canonical files without preview duplicates or noisy app chrome."
+  },
+  "principles": [
+    {
+      "id": "agent-first",
+      "title": "Agent-operable local vault surface",
+      "rule": "Core contracts, runtime expectations, and verification evidence should be structured enough for future agents to operate from a fresh clone.",
+      "good": [".go JSON state", "docs/vision.json", "runtime fixture tests", "explicit evidence"],
+      "bad": ["chat-only product direction", "manual-only assumptions", "unverified UI claims"]
+    },
+    {
+      "id": "json-first",
+      "title": "JSON and JSONL contracts first",
+      "rule": "Machine-consumable project/workflow contracts should be JSON or JSONL; Markdown is useful narrative context, not the only source of truth.",
+      "good": [".go/vision.json", ".go/tasks/**/*.json", "docs/vision.json", "records/*.jsonl"],
+      "bad": ["strategy only in prose", "generated evidence only as Markdown", "implicit vault conventions"]
+    },
+    {
+      "id": "vault-canonical",
+      "title": "Vault files remain canonical",
+      "rule": "Mega Vault Viewer may index, render, and cache rebuildable runtime state, but source files and CAS blobs remain the truth.",
+      "good": ["daily/YYYY-MM-DD.md", "blobs/sha256/<first2>/<hash>", "SQLite/Tantivy as rebuildable cache"],
+      "bad": ["duplicate preview payloads", "hidden write side effects", "runtime state as source of truth"]
+    },
+    {
+      "id": "calm-reader-shell",
+      "title": "Calm reader shell",
+      "rule": "Large vault navigation and long notes need independent scroll regions, top-level folder navigation, remembered vaults, and non-redundant headers.",
+      "good": ["sidebar scroll independent from document", "top-level folders", "vault switcher", "compact filename/path header"],
+      "bad": ["single slab page scroll", "flat dump of deep generated folders", "redundant Opened/status/subtitle chrome"]
+    }
+  ],
+  "non_goals": [
+    "Obsidian Live Preview replacement",
+    "Cloud sync/account/telemetry product",
+    "Duplicate binary payload or preview-file store",
+    "Broad write automation for human daily notes",
+    "Flat dump of every nested generated folder as primary navigation"
+  ],
+  "public_safety": {
+    "forbidden": ["secrets", "customer data", "private screenshots", "private vault content", "proprietary copied content"],
+    "required_boundaries": ["synthetic fixtures for public screenshots", "local-first/no network by default", "explicit proof for UI/runtime claims"]
+  },
+  "acceptance_scorecard": [
+    {"id": "daily-layout", "question": "Does MVV understand the JSONL-vault daily layout?", "pass_condition": "Tests assert daily/YYYY-MM-DD.md detection and first-item preference."},
+    {"id": "folder-navigation", "question": "Does the sidebar start from top-level vault folders?", "pass_condition": "Folder aggregation groups by top-level path instead of deep generated paths."},
+    {"id": "reader-shell", "question": "Is the reader shell calmer and usable for long notes?", "pass_condition": "Sidebar and document pane have independent scroll regions; header is non-redundant."},
+    {"id": "local-persistence", "question": "Does the app remember the current vault?", "pass_condition": "Local storage stores last vault and recent vault switcher entries."}
+  ],
+  "review_checklist": [
+    "Did npm run check pass?",
+    "Did runtime tests cover daily/YYYY-MM-DD.md and top-level folders?",
+    "Does the UI avoid duplicate Opened/status/subtitle chrome?",
+    "Does the final report distinguish release-binary build from AppImage packaging if linuxdeploy fails?",
+    "Are private screenshots/vault content excluded from public docs and assets?"
+  ],
+  "maturity_model": [
+    {"level": "L0", "state": "present", "meaning": "Vision and .go contracts exist and validate."},
+    {"level": "L1", "state": "tested", "meaning": "Core layout/rendering conventions have fixture tests."},
+    {"level": "L2", "state": "operational", "meaning": "Real desktop UX has been smoke-tested against a JSONL-vault-shaped vault."}
+  ],
+  "residual_risk_wording": "This contract defines direction and review boundaries; desktop AppImage packaging and real UI smoke still require platform/runtime evidence when linuxdeploy or Tauri UI access is unavailable."
+}

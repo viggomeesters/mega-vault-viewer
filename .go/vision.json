@@ -1,0 +1,39 @@
+{
+  "schema": "go-workflow.repo-local.vision.v1",
+  "kind": "vision",
+  "project": "mega-vault-viewer",
+  "status": "active",
+  "north_star": "Mega Vault Viewer is the calm, local-first read/view/search surface for filesystem knowledge vaults where source files stay canonical and runtime indexes are disposable.",
+  "wedge": "A high-signal vault viewer for large Markdown/Obsidian-style vaults, not another editor-first Obsidian clone.",
+  "target_user": "Power users and agents working with large local vaults who need fast navigation, reliable daily note browsing, graph/search context, and safe rendering without mutating the vault.",
+  "core_promise": "Open a vault once, keep it remembered, browse the real top-level structure, jump through daily notes, and read rich Markdown/CAS media from canonical files without preview duplicates or noisy app chrome.",
+  "product_principles": [
+    "Source files remain the source of truth; SQLite/Tantivy/render state is rebuildable cache.",
+    "Read-first before edit-first; writes are explicit, scoped, and transaction-minded.",
+    "JSONL-vault conventions are first-class: daily notes live at daily/YYYY-MM-DD.md; binary payloads live in CAS at blobs/sha256/<first2>/<hash>.",
+    "Navigation should mirror the vault's mental model: top-level folders first, details on demand.",
+    "The app shell must be calm: independent sidebar/document scrolling, non-redundant headers, compact metadata.",
+    "Local-first UX must remember the current vault and offer a switcher without cloud/account state.",
+    "Verification must include fixture/runtime proof for real vault layouts, not only static UI assumptions."
+  ],
+  "non_goals": [
+    "Not an Obsidian Live Preview replacement.",
+    "Not a cloud sync, hosted account, or telemetry product.",
+    "Not a second binary payload store or preview-file cache.",
+    "Not a broad write automation system for human daily notes.",
+    "Not a raw dump of every nested generated folder as primary navigation."
+  ],
+  "success_metrics": [
+    "daily/YYYY-MM-DD.md daily notes are detected, opened from calendar, and preferred as first item when present.",
+    "Folders view shows top-level folders such as daily, records, blobs, manifests instead of flat deep generated paths.",
+    "Sidebar and document panes scroll independently at desktop sizes.",
+    "Current vault is remembered locally and recent vaults are switchable without re-pasting paths.",
+    "Vault summary shows size in GB from indexed file bytes.",
+    "Header shows filename and path without redundant Opened/status/subtitle text.",
+    "npm run check passes."
+  ],
+  "context_refs": [
+    "docs/vision.md",
+    "AGENTS.md"
+  ]
+}
