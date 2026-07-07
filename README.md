@@ -18,12 +18,12 @@ The app is aimed at people who like Markdown and filesystem-based knowledge work
 
 ## Current Status
 
-Mega Vault Viewer is an MVP desktop app. It is useful for local development and fixture-based testing, but it is not yet a signed, notarized, or distributed macOS release.
+Mega Vault Viewer is an MVP desktop app with a GitHub Releases based macOS install/update path. macOS release artifacts are still unsigned unless a specific release states otherwise.
 
 Known maturity boundaries:
 
 - macOS is the primary target.
-- Builds are local developer builds unless a GitHub release explicitly provides artifacts.
+- GitHub release artifacts are installable/updateable through `scripts/install-macos.sh`.
 - Runtime indexes are rebuildable caches, not a second source of truth.
 - Editing exists for Markdown notes, but the product direction remains read-first and explicit-write-first.
 
@@ -85,11 +85,27 @@ MEGA_VAULT_VIEWER_DEFAULT_VAULT_PATH=/path/to/vault npm run desktop:dev
 
 ## Installation
 
-There is no packaged public installer yet. For now, build from source.
+### macOS latest release
+
+Install or update the latest GitHub release on a MacBook:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/viggomeesters/mega-vault-viewer/main/scripts/install-macos.sh | bash
+```
+
+Install a specific version:
+
+```bash
+MVV_VERSION=v0.1.1 bash scripts/install-macos.sh
+```
+
+The script downloads the matching macOS release asset for your architecture, copies `Mega Vault Viewer.app` to `/Applications`, and removes quarantine metadata for the unsigned local build. Until signing/notarization is added, macOS may still ask you to confirm opening the app the first time.
+
+### Build from source
 
 Prerequisites:
 
-- macOS for `.app` packaging and notarized release validation
+- macOS for `.app`/`.dmg` packaging and notarized release validation
 - Windows 10/11 for Windows installer packaging (`nsis`/`msi`)
 - WSL2 or Linux for core development and checks
 - Rust stable toolchain
@@ -108,16 +124,17 @@ Run the desktop app in development:
 npm run desktop:dev
 ```
 
-Build the macOS app bundle on macOS:
+Build the macOS app bundle and DMG on macOS:
 
 ```bash
-npm run desktop:build
+npm run desktop:build:macos
 ```
 
-The generated `.app` bundle is written under:
+The generated `.app` and `.dmg` artifacts are written under:
 
 ```text
 target/release/bundle/macos/
+target/release/bundle/dmg/
 ```
 
 Build Windows installers on Windows with the standard MSVC toolchain:
@@ -191,6 +208,7 @@ cargo test --workspace
 cargo clippy --all-targets -- -D warnings
 npm test --if-present
 npm run build --if-present
+npm run desktop:build:macos # macOS host only
 npm run desktop:build
 npm run desktop:build:windows # Windows host only
 npm run smoke:minimal-starter # with ../minimal-ai-vault-starter checkout
@@ -204,8 +222,8 @@ Releases should be explicit and evidence-backed:
 1. Run the full verification suite.
 2. Build the macOS app bundle.
 3. Update `CHANGELOG.md`.
-4. Create a Git tag.
-5. Attach release artifacts only when signing/notarization status is clear.
+4. Create and push a Git tag.
+5. Let `.github/workflows/release-macos.yml` build and attach macOS assets.
 
 Until a release says otherwise, builds are unsigned local builds.
 

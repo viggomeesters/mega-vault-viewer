@@ -8,6 +8,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 No unreleased changes yet.
 
+## [0.1.1] - 2026-07-07
+
+### Added
+
+- JSONL-vault layout support for `daily/YYYY-MM-DD.md`, top-level folder navigation, CAS blob rendering, remembered vaults, vault-size display, and cleaner independent-scroll reader shell.
+- GitHub Releases based macOS install/update channel with Apple Silicon and Intel artifacts.
+- `scripts/install-macos.sh` for one-command install/update to `/Applications`.
+- Linux AppImage packaging fallback for WSL/CI environments where linuxdeploy/AppImage FUSE handling or icon basename quirks break Tauri bundling.
+
+### Notes
+
+- macOS artifacts are unsigned and not notarized until signing credentials are added.
+- The macOS install/update script is a pragmatic release-channel updater, not an in-app auto-updater.
+
 ## [0.1.0] - 2026-06-22
 
 ### Added

@@ -8,6 +8,7 @@
   "scripts": {
     "desktop:dev": "npm --workspace apps/desktop run tauri:dev",
     "desktop:build": "npm --workspace apps/desktop run tauri:build",
+    "desktop:build:macos": "npm --workspace apps/desktop run tauri:build:macos",
     "desktop:build:windows": "npm --workspace apps/desktop run tauri:build:windows",
     "desktop:build:windows:gnu": "npm --workspace apps/desktop run tauri:build:windows:gnu",
     "build": "npm --workspace apps/desktop run build && cargo build --workspace",

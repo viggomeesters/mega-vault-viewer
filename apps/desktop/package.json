@@ -1,7 +1,7 @@
 {
   "name": "mega-vault-viewer-desktop",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "scripts": {
     "dev:web": "vite --host 127.0.0.1 --port 1420",
@@ -9,9 +9,11 @@
     "build": "tsc --noEmit && vite build",
     "test": "node --test src/*.test.ts && tsc --noEmit",
     "desktop:build": "node ../../scripts/tauri-build.mjs",
+    "desktop:build:macos": "TAURI_BUNDLES=dmg,app node ../../scripts/tauri-build.mjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "node ../../scripts/tauri-build.mjs",
+    "tauri:build:macos": "TAURI_BUNDLES=dmg,app node ../../scripts/tauri-build.mjs",
     "tauri:build:windows": "tauri build --bundles nsis,msi",
     "tauri:build:windows:gnu": "tauri build --target x86_64-pc-windows-gnu --bundles nsis,msi"
   },

@@ -1,0 +1,34 @@
+{
+  "schema": "go-workflow.repo-local.task.v1",
+  "kind": "task",
+  "id": "mvv-macos-install-update",
+  "project": "mega-vault-viewer",
+  "status": "done",
+  "summary": "Make macOS install and update path usable from GitHub releases",
+  "description": "Add macOS release artifacts plus a one-command install/update script so Viggo can install Mega Vault Viewer on MacBook and rerun updates after future agent releases.",
+  "scope": {
+    "read": [
+      "package.json;apps/desktop/package.json;apps/desktop/src-tauri/tauri.conf.json;.github/workflows/*.yml;README.md;docs/release.md"
+    ],
+    "modify": [
+      "package.json;apps/desktop/package.json;scripts/**;.github/workflows/**;README.md;docs/release.md;.go/**"
+    ]
+  },
+  "acceptance": [
+    "A macOS user can run one script to install/update latest GitHub release; GitHub release workflow uploads macOS app/archive assets on tags; local checks pass"
+  ],
+  "verification": [
+    "npm run check;bash -n scripts/install-macos.sh;node --check scripts/tauri-build.mjs"
+  ],
+  "claim": {
+    "agent": "hermes",
+    "claimed_at": "2026-07-07T10:59:19+02:00"
+  },
+  "evidence": [
+    {
+      "created_at": "2026-07-07T11:07:12+02:00",
+      "agent": "hermes",
+      "summary": "Added GitHub Releases macOS install/update channel: release-macos workflow builds aarch64/x86_64 macOS app+DMG assets, scripts/install-macos.sh installs/updates latest release to /Applications, versions bumped to 0.1.1, docs/changelog updated. Verified npm run check, bash -n install script, node --check tauri-build, go validate, release workflow smoke."
+    }
+  ]
+}
