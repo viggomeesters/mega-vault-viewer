@@ -99,7 +99,7 @@ Install a specific version:
 MVV_VERSION=v0.1.1 bash scripts/install-macos.sh
 ```
 
-The script downloads the matching macOS release asset for your architecture, copies `Mega Vault Viewer.app` to `/Applications`, and removes quarantine metadata for the unsigned local build. Until signing/notarization is added, macOS may still ask you to confirm opening the app the first time.
+The script first tries to download the matching macOS release asset for your architecture. If no release asset exists yet, it falls back to cloning/updating the repo under `~/.local/share/mega-vault-viewer/source`, building locally with `npm run desktop:build:macos`, copying `Mega Vault Viewer.app` to `/Applications`, and removing quarantine metadata. Until signing/notarization is added, macOS may still ask you to confirm opening the app the first time.
 
 ### Build from source
 

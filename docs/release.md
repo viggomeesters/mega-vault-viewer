@@ -90,7 +90,7 @@ Install a specific release:
 MVV_VERSION=v0.1.1 bash scripts/install-macos.sh
 ```
 
-The script detects `arm64`/`x86_64`, downloads the matching release asset, copies `Mega Vault Viewer.app` to `/Applications`, and removes quarantine metadata. This is a pragmatic update channel, not an in-app auto-updater.
+The script detects `arm64`/`x86_64`, downloads the matching release asset when present, and otherwise falls back to a local source build from GitHub. In both paths it copies `Mega Vault Viewer.app` to `/Applications` and removes quarantine metadata. This is a pragmatic update channel, not an in-app auto-updater.
 
 Until signing and notarization are implemented, release notes must clearly state that macOS artifacts are unsigned.
 

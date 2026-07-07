@@ -5,6 +5,7 @@ REPO="${MVV_REPO:-viggomeesters/mega-vault-viewer}"
 VERSION="${MVV_VERSION:-latest}"
 APP_NAME="Mega Vault Viewer.app"
 INSTALL_DIR="${MVV_INSTALL_DIR:-/Applications}"
+SOURCE_DIR="${MVV_SOURCE_DIR:-$HOME/.local/share/mega-vault-viewer/source}"
 API_ROOT="https://api.github.com/repos/${REPO}"
 TMP_DIR="$(mktemp -d)"
 
@@ -20,6 +21,57 @@ need() {
   fi
 }
 
+install_app() {
+  local app_source="$1"
+  if [[ -z "$app_source" || ! -d "$app_source" ]]; then
+    echo "Could not find ${APP_NAME}" >&2
+    exit 1
+  fi
+
+  local target="$INSTALL_DIR/$APP_NAME"
+  echo "Installing to $target"
+  if [[ -d "$target" ]]; then
+    rm -rf "$target"
+  fi
+  if [[ ! -w "$INSTALL_DIR" ]]; then
+    sudo ditto "$app_source" "$target"
+    sudo xattr -dr com.apple.quarantine "$target" 2>/dev/null || true
+  else
+    ditto "$app_source" "$target"
+    xattr -dr com.apple.quarantine "$target" 2>/dev/null || true
+  fi
+  echo "Installed Mega Vault Viewer: $target"
+  echo "Open it with: open '$target'"
+}
+
+install_from_source() {
+  echo "No usable GitHub release asset found; falling back to source build."
+  need git
+  need npm
+  need cargo
+  need ditto
+
+  mkdir -p "$(dirname "$SOURCE_DIR")"
+  if [[ ! -d "$SOURCE_DIR/.git" ]]; then
+    echo "Cloning ${REPO} to ${SOURCE_DIR}"
+    git clone "https://github.com/${REPO}.git" "$SOURCE_DIR"
+  fi
+
+  git -C "$SOURCE_DIR" fetch --tags origin
+  if [[ "$VERSION" == "latest" ]]; then
+    git -C "$SOURCE_DIR" checkout main
+    git -C "$SOURCE_DIR" pull --ff-only origin main
+  else
+    git -C "$SOURCE_DIR" checkout "$VERSION"
+  fi
+
+  echo "Building macOS app locally"
+  (cd "$SOURCE_DIR" && npm ci && npm run desktop:build:macos)
+  local app_source
+  app_source="$(find "$SOURCE_DIR/target/release/bundle/macos" -maxdepth 1 -name "$APP_NAME" -type d | head -n 1)"
+  install_app "$app_source"
+}
+
 need curl
 need python3
 need ditto
@@ -31,6 +83,11 @@ case "$arch_name" in
   *) echo "Unsupported macOS architecture: $arch_name" >&2; exit 2 ;;
 esac
 
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  echo "This installer is for macOS. Detected: $(uname -s)" >&2
+  exit 2
+fi
+
 if [[ "$VERSION" == "latest" ]]; then
   release_url="${API_ROOT}/releases/latest"
 else
@@ -40,12 +97,13 @@ fi
 echo "Fetching Mega Vault Viewer release metadata: ${REPO} ${VERSION}"
 release_json="$TMP_DIR/release.json"
 if ! curl -fsSL "$release_url" -o "$release_json"; then
-  echo "No GitHub release found for ${REPO} (${VERSION})." >&2
-  echo "Create a release tag first, for example: git tag -a v0.1.1 -m 'Mega Vault Viewer v0.1.1' && git push origin v0.1.1" >&2
-  exit 1
+  install_from_source
+  exit 0
 fi
 
-asset_url="$(python3 - "$release_json" "$arch_pattern" <<'PY'
+asset_url=""
+selector_output="$TMP_DIR/selector.out"
+if python3 - "$release_json" "$arch_pattern" > "$selector_output" <<'PY'
 import json, re, sys
 path, pattern = sys.argv[1], sys.argv[2]
 release = json.load(open(path, encoding='utf-8'))
@@ -66,7 +124,13 @@ for suffix in ('.dmg', '.zip', '.tar.gz', '.tgz'):
 safe_assets = ', '.join(asset.get('name', '') for asset in assets) or '(no assets)'
 raise SystemExit(f'No matching macOS asset for arch pattern {pattern}. Available assets: {safe_assets}')
 PY
-)"
+then
+  asset_url="$(cat "$selector_output")"
+else
+  cat "$selector_output" >&2 || true
+  install_from_source
+  exit 0
+fi
 
 asset_name="${asset_url##*/}"
 asset_path="$TMP_DIR/$asset_name"
@@ -98,27 +162,9 @@ case "$asset_name" in
     ;;
   *)
     echo "Unsupported asset type: $asset_name" >&2
-    exit 2
+    install_from_source
+    exit 0
     ;;
 esac
 
-if [[ -z "$app_source" || ! -d "$app_source" ]]; then
-  echo "Could not find ${APP_NAME} inside $asset_name" >&2
-  exit 1
-fi
-
-target="$INSTALL_DIR/$APP_NAME"
-echo "Installing to $target"
-if [[ -d "$target" ]]; then
-  rm -rf "$target"
-fi
-if [[ ! -w "$INSTALL_DIR" ]]; then
-  sudo ditto "$app_source" "$target"
-  sudo xattr -dr com.apple.quarantine "$target" 2>/dev/null || true
-else
-  ditto "$app_source" "$target"
-  xattr -dr com.apple.quarantine "$target" 2>/dev/null || true
-fi
-
-echo "Installed Mega Vault Viewer: $target"
-echo "Open it with: open '$target'"
+install_app "$app_source"
