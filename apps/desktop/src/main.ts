@@ -227,7 +227,7 @@ function render() {
       <aside class="sidebar" aria-label="Vault explorer">
         <div class="brand compact-brand" aria-label="Mega Vault Viewer">
           <div class="brand-lockup">
-            <span class="vault-mark" aria-hidden="true"><i></i></span>
+            <img class="vault-mark" src="/vault-mark.png" alt="" aria-hidden="true" />
             <strong title="Mega Vault Viewer">MVV</strong>
           </div>
           <span class="brand-status">${escapeHtml(formatIndexHealth())}</span>

@@ -1,0 +1,34 @@
+{
+  "schema": "go-workflow.repo-local.task.v1",
+  "kind": "task",
+  "id": "mvv-fix-packaged-logo-assets",
+  "project": "mega-vault-viewer",
+  "status": "done",
+  "summary": "Fix packaged logo image assets",
+  "description": "Make the supplied logo work in packaged desktop builds by generating a full Tauri icon asset set including macOS .icns and updating bundle config.",
+  "scope": {
+    "read": [
+      "apps/desktop/src-tauri/tauri.conf.json;apps/desktop/src-tauri/icons/**;scripts/**"
+    ],
+    "modify": [
+      "apps/desktop/src-tauri/tauri.conf.json;apps/desktop/src-tauri/icons/**;CHANGELOG.md;.go/**"
+    ]
+  },
+  "acceptance": [
+    "Icon assets include macOS icns and standard png sizes generated from the supplied logo; tauri bundle config references the complete icon set; build/check pass."
+  ],
+  "verification": [
+    "file icons; npm --workspace apps/desktop run build; npm run check"
+  ],
+  "claim": {
+    "agent": "hermes",
+    "claimed_at": "2026-07-08T06:38:47+02:00"
+  },
+  "evidence": [
+    {
+      "created_at": "2026-07-08T06:42:58+02:00",
+      "agent": "hermes",
+      "summary": "Fixed logo delivery: sidebar brand now renders actual /vault-mark.png image with browser proof naturalWidth=128 naturalHeight=128 broken=false rendered=24x24; generated full Tauri icon set from supplied image including 32x32.png, 128x128.png, 128x128@2x.png, icon.png, icon.icns, icon.ico; tauri.conf references all icon assets; npm run check and npm run desktop:build pass; AppImage written."
+    }
+  ]
+}
