@@ -256,6 +256,7 @@ function render() {
             ${currentDocument ? `<code title="${escapeAttribute(currentDocument.path)}">${escapeHtml(currentDocument.relative_path)}</code>` : ""}
           </div>
           <div class="document-actions">
+            ${renderViewDock()}
             <div class="document-action-row">
               ${
                 currentDocument?.can_edit_source
@@ -283,22 +284,59 @@ function render() {
           </div>
         </header>
 
-        ${currentDocument && !isEditing ? renderItemDetailsPanel(currentDocument) : ""}
-        ${currentDocument && !isEditing && isMarkdownItem(currentDocument) ? renderMetadataPanel(currentDocument) : ""}
-        ${currentDocument && !isEditing && isMarkdownItem(currentDocument) ? renderLinkPanel(currentDocument) : ""}
-
         <article class="document-body ${isEditing ? "is-editing" : ""}">
           ${renderDocumentContent()}
         </article>
       </section>
 
-      <aside class="right-rail" aria-label="Calendar and outline">
-        ${renderRightRail()}
-      </aside>
     </section>
   `;
 
   bindEvents();
+}
+
+function renderViewDock() {
+  if (isEditing) {
+    return "";
+  }
+
+  const itemViews = currentDocument
+    ? `
+        <details class="view-popover item-view-popover">
+          <summary title="Item details" aria-label="Item details">⌘</summary>
+          <div class="view-popover-panel">${renderItemDetailsPanel(currentDocument)}</div>
+        </details>
+        ${isMarkdownItem(currentDocument) ? `
+          <details class="view-popover frontmatter-view-popover">
+            <summary title="Frontmatter" aria-label="Frontmatter">◧</summary>
+            <div class="view-popover-panel">${renderMetadataPanel(currentDocument)}</div>
+          </details>
+          <details class="view-popover links-view-popover">
+            <summary title="Links" aria-label="Links">↔</summary>
+            <div class="view-popover-panel">${renderLinkPanel(currentDocument)}</div>
+          </details>
+        ` : ""}
+        <details class="view-popover outline-view-popover">
+          <summary title="Outline" aria-label="Outline">☰</summary>
+          <div class="view-popover-panel">${renderDocumentOutlinePanel()}</div>
+        </details>
+      `
+    : "";
+
+  const readyViews = appMode === "ready"
+    ? `
+        <details class="view-popover calendar-view-popover">
+          <summary title="Daily calendar" aria-label="Daily calendar">◫</summary>
+          <div class="view-popover-panel calendar-popover-panel">${renderDailyCalendar()}${renderStarterVaultSummary()}</div>
+        </details>
+      `
+    : "";
+
+  if (!itemViews && !readyViews) {
+    return "";
+  }
+
+  return `<nav class="view-dock" aria-label="Extra views">${itemViews}${readyViews}</nav>`;
 }
 
 function renderItemDetailsPanel(item: VaultItemView) {
@@ -479,17 +517,6 @@ function renderSearchHit(hit: SearchHit) {
       <span>${escapeHtml(hit.snippet)}</span>
       <small>${escapeHtml(hit.kind)} · ${escapeHtml(hit.title)} · ${formatScore.format(hit.score)}</small>
     </button>
-  `;
-}
-
-function renderRightRail() {
-  if (appMode !== "ready") {
-    return "";
-  }
-  return `
-    ${renderDailyCalendar()}
-    ${renderDocumentOutlinePanel()}
-    ${renderStarterVaultSummary()}
   `;
 }
 

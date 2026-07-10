@@ -1,0 +1,34 @@
+{
+  "schema": "go-workflow.repo-local.task.v1",
+  "kind": "task",
+  "id": "mvv-obsidian-style-reader-shell",
+  "project": "mega-vault-viewer",
+  "status": "done",
+  "summary": "Restyle reader shell to match Viggo's Obsidian setup",
+  "description": "Make Mega Vault Viewer visually follow Viggo's Obsidian setup from the screenshot: open dark reader canvas, compact left sidebar/chrome, extra views as small top icons, and frontmatter/links/item/outline/calendar as click-open popovers instead of always-open heavy panels.",
+  "scope": {
+    "read": [
+      "apps/desktop/src/main.ts;apps/desktop/src/styles.css;/home/viggo/.hermes/image_cache/img_b88117d03d79.jpg"
+    ],
+    "modify": [
+      "apps/desktop/src/main.ts;apps/desktop/src/styles.css"
+    ]
+  },
+  "acceptance": [
+    "Two-column layout with no permanent right rail; document canvas is open/dark and not card-heavy; item/frontmatter/links/outline/calendar are reachable from compact top icons; frontmatter remains click-open; visual style uses Obsidian-like compact dark chrome, magenta headings and cyan links; tests/build/browser smoke pass."
+  ],
+  "verification": [
+    "npm --workspace apps/desktop run test;npm --workspace apps/desktop run build;git diff --check;browser smoke at http://127.0.0.1:1420 has no console errors"
+  ],
+  "claim": {
+    "agent": "hermes-default",
+    "claimed_at": "2026-07-10T08:50:27+02:00"
+  },
+  "evidence": [
+    {
+      "created_at": "2026-07-10T08:51:48+02:00",
+      "agent": "hermes-default",
+      "summary": "Original prompt check: mega vault viewer restyled toward Viggo's Obsidian screenshot; implemented open dark two-column shell, compact left/sidebar chrome, no permanent right rail, extra views moved to top icon popovers, frontmatter remains click-open. Follow-up materialization: no separate follow-up task created; remaining richer proof would require a Tauri runtime/document-open smoke, but web smoke + TS/build covers current change. Micro devil / anti-slop: result avoids card-heavy SaaS panels and keeps reader canvas open; icon popovers have aria labels; risk is web smoke cannot exercise Tauri invoke/opened-document state. Recheck: reran npm --workspace apps/desktop run test, npm --workspace apps/desktop run build, git diff --check, browser smoke on http://127.0.0.1:1421 with zero console errors; killed dev servers and stray node listeners. Self-reflect: process miss was reporting local changes before committing/pushing, causing visibility confusion; fixed now by materializing as .go task and proceeding to commit/push, no skill mutation needed because go-now already requires commit/push."
+    }
+  ]
+}

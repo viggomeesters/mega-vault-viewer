@@ -41,7 +41,8 @@
         "mvv-remove-sidebar-nav-strip",
         "mvv-outline-and-large-jsonl-preview",
         "mvv-vault-mark-logo",
-        "mvv-fix-packaged-logo-assets"
+        "mvv-fix-packaged-logo-assets",
+        "mvv-obsidian-style-reader-shell"
       ]
     },
     {
