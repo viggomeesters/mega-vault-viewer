@@ -14,5 +14,9 @@
   "links": {
     "repo": "https://github.com/viggomeesters/mega-vault-viewer",
     "vision": "docs/vision.md"
-  }
+  },
+  "contract_version": 2,
+  "project_mode": "project",
+  "required_stack_version": "0.3.5",
+  "stack_ref": "v0.3.5"
 }

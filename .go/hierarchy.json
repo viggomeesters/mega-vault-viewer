@@ -13,7 +13,9 @@
           "tasks": []
         }
       ],
-      "tasks": []
+      "tasks": [
+        "migrate-go-contract-v035"
+      ]
     },
     {
       "id": "vault-runtime",

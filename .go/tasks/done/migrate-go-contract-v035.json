@@ -1,0 +1,36 @@
+{
+  "schema": "go-workflow.repo-local.task.v1",
+  "kind": "task",
+  "execution_mode": "mechanical",
+  "id": "migrate-go-contract-v035",
+  "project": "mega-vault-viewer",
+  "status": "done",
+  "summary": "Migrate repo-local GO contract to v0.3.5",
+  "description": "Upgrade the legacy .go contract, preserve task history, and validate against go-workflow-stack v0.3.5.",
+  "scope": {
+    "read": [
+      ".go/**"
+    ],
+    "modify": [
+      ".go/**"
+    ]
+  },
+  "acceptance": [
+    "Project contract requires v0.3.5",
+    "Existing task history remains linked and validation passes"
+  ],
+  "verification": [
+    "go-workflow validate ."
+  ],
+  "claim": {
+    "agent": "hermes",
+    "claimed_at": "2026-07-18T09:57:39+02:00"
+  },
+  "evidence": [
+    {
+      "created_at": "2026-07-18T09:57:39+02:00",
+      "agent": "hermes",
+      "summary": "Legacy contract migrated to v2/v0.3.5; historical tasks linked; validation passed."
+    }
+  ]
+}
